@@ -159,12 +159,15 @@ sealed class FakeEnv : IDeliveryEnvironment
     public bool ClipboardOk { get; set; } = true;
     public bool Released { get; set; } = true;
     public bool SendOk { get; set; } = true;
+    public bool EnterOk { get; set; } = true;
+    public bool ModifierHeld { get; set; }
     public Queue<PasteContext> Contexts { get; } = new();
     public PasteContext Default { get; set; } = new(1000, 1000, false, TargetElevation.NotElevated, true);
     public Action? OnWait { get; set; }
     public Action? OnCapture { get; set; }
+    public Action? OnSend { get; set; }
 
-    public int ClipboardCalls, WaitCalls, CaptureCalls, SendCalls;
+    public int ClipboardCalls, WaitCalls, CaptureCalls, SendCalls, EnterCalls;
     public string? Clipboard;
 
     public Task<bool> SetClipboardAsync(string text)
@@ -191,12 +194,102 @@ sealed class FakeEnv : IDeliveryEnvironment
     public bool SendPaste()
     {
         SendCalls++;
+        OnSend?.Invoke();
         return SendOk;
+    }
+
+    public bool SendEnter()
+    {
+        EnterCalls++;
+        return EnterOk;
     }
 }
 
 public class ResultDeliveryTests
 {
+    [Fact]
+    public async Task 貼り付けに成功したときだけEnterを送る()
+    {
+        var env = new FakeEnv();
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.Pasted, r.Outcome);
+        Assert.True(r.EnterSent);
+        Assert.Equal(1, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task Enterを求めなければ送らない()
+    {
+        var env = new FakeEnv();
+        var r = await ResultDelivery.RunAsync(env, "t", false);
+        Assert.False(r.EnterSent);
+        Assert.Equal(0, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task コピーのみの結果ではEnterを送らない()
+    {
+        var env = new FakeEnv { Default = new(1000, 2000, false, TargetElevation.NotElevated, true) }; // 前面が移っている
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.CopiedOnly, r.Outcome);
+        Assert.Equal(0, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task 貼り付けキーの送信失敗や中止済みではEnterを送らない()
+    {
+        var failed = new FakeEnv { SendOk = false };
+        Assert.Equal(DeliveryOutcome.PasteSendFailed, (await ResultDelivery.RunAsync(failed, "t", false, pressEnter: true)).Outcome);
+        Assert.Equal(0, failed.EnterCalls);
+
+        var aborted = new FakeEnv();
+        Assert.Equal(DeliveryOutcome.AbortedCopied, (await ResultDelivery.RunAsync(aborted, "t", true, pressEnter: true)).Outcome);
+        Assert.Equal(0, aborted.EnterCalls);
+    }
+
+    [Fact]
+    public async Task 貼り付けとEnterの間に終了したらEnterを送らない()
+    {
+        var env = new FakeEnv();
+        env.OnSend = () => env.Exiting = true;
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.Pasted, r.Outcome);
+        Assert.False(r.EnterSent);
+        Assert.Equal(0, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task 貼り付けとEnterの間に前面が移ったらEnterを送らない()
+    {
+        var env = new FakeEnv();
+        env.OnSend = () => env.Default = new(1000, 2000, false, TargetElevation.NotElevated, true);
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.Pasted, r.Outcome);
+        Assert.False(r.EnterSent);
+        Assert.Equal(0, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task 貼り付けとEnterの間に修飾キーが押されたらEnterを送らない()
+    {
+        var env = new FakeEnv();
+        env.OnSend = () => env.ModifierHeld = true;
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.Pasted, r.Outcome);
+        Assert.False(r.EnterSent);
+        Assert.Equal(0, env.EnterCalls);
+    }
+
+    [Fact]
+    public async Task Enter送信の失敗は結果に残る()
+    {
+        var env = new FakeEnv { EnterOk = false };
+        var r = await ResultDelivery.RunAsync(env, "t", false, pressEnter: true);
+        Assert.Equal(DeliveryOutcome.Pasted, r.Outcome);
+        Assert.False(r.EnterSent);
+        Assert.Equal(1, env.EnterCalls);
+    }
+
     [Fact]
     public async Task 通常は待機後に貼り付ける()
     {

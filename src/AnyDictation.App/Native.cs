@@ -15,7 +15,7 @@ internal static class Native
     public const uint WINEVENT_OUTOFCONTEXT = 0;
     public const uint INPUT_KEYBOARD = 1;
     public const uint KEYEVENTF_KEYUP = 0x0002;
-    public const ushort VK_CONTROL = 0x11, VK_V = 0x56, VK_MASK = 0xE8;
+    public const ushort VK_CONTROL = 0x11, VK_V = 0x56, VK_RETURN = 0x0D, VK_MASK = 0xE8;
     public const ushort VK_SHIFT = 0x10, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C;
 
     /// <summary>自身が SendInput したイベントを識別する dwExtraInfo。フックはこの値を持つイベントを無視する。</summary>
@@ -83,7 +83,24 @@ internal static class Native
         public uint lPrivate;
     }
 
-    public const uint WM_QUIT = 0x0012, WM_APP = 0x8000, PM_NOREMOVE = 0;
+    public const uint WM_QUIT = 0x0012, WM_TIMER = 0x0113, WM_HOTKEY = 0x0312, WM_APP = 0x8000, PM_NOREMOVE = 0;
+    public const uint MOD_ALT = 0x0001, MOD_SHIFT = 0x0004, MOD_NOREPEAT = 0x4000;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+
+    /// <summary>hwnd が NULL のスレッドタイマー。戻り値のタイマー ID が WM_TIMER の wParam に入る(0 は失敗)。</summary>
+    [DllImport("user32.dll")]
+    public static extern UIntPtr SetTimer(IntPtr hwnd, UIntPtr id, uint elapseMs, IntPtr proc);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool KillTimer(IntPtr hwnd, UIntPtr id);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -160,6 +177,8 @@ internal static class Native
     public static bool SendMaskKey(UIntPtr marker) => Send(Key(VK_MASK, false, marker), Key(VK_MASK, true, marker));
 
     public static bool SendCtrlV() => Send(Key(VK_CONTROL, false, OwnMarker), Key(VK_V, false, OwnMarker), Key(VK_V, true, OwnMarker), Key(VK_CONTROL, true, OwnMarker));
+
+    public static bool SendEnter() => Send(Key(VK_RETURN, false, OwnMarker), Key(VK_RETURN, true, OwnMarker));
 
     /// <summary>貼り付け先ウィンドウのプロセスの権限。API 失敗は NotElevated にせず Unknown として返す。</summary>
     public static TargetElevation EvaluateElevation(IntPtr hwnd)

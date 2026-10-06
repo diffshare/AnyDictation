@@ -109,6 +109,8 @@ internal sealed class AnyApp : Application
 
         _hook = new KeyboardHook();
         _hook.Toggled += OnHotkey;
+        _hook.Triggered += OnHookAction;
+        _controller.StateChanged += state => _hook.Recording = state == SessionState.Recording;
         try
         {
             _hook.Install();
@@ -135,6 +137,20 @@ internal sealed class AnyApp : Application
         long detected = Stopwatch.GetTimestamp();
         Dispatcher.BeginInvoke(() => RequestToggle("hotkey", detected));
     }
+
+    /// <summary>フックスレッドから呼ばれる。OnHotkey と同じく UI スレッドへ渡すだけにする。</summary>
+    void OnHookAction(HookAction action) => Dispatcher.BeginInvoke(() =>
+    {
+        Log.Write($"hook action={action}");
+        switch (action)
+        {
+            case HookAction.HoldStart: _controller.HoldStart(); break;
+            case HookAction.HoldEnd: _controller.HoldEnd(); break;
+            case HookAction.Cancel: _controller.CancelRecording(); break;
+            case HookAction.Submit: _controller.SubmitRecording(); break;
+            case HookAction.Repaste: _controller.RepasteLast(); break;
+        }
+    });
 
     /// <summary>録音の開始/停止要求の入口。経路(hotkey/tray)と、検出から UI 処理までの遅れだけを記録する。</summary>
     void RequestToggle(string source, long detected = 0)
