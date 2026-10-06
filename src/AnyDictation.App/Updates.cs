@@ -9,7 +9,8 @@ namespace AnyDictation.App;
 
 /// <summary>
 /// インストール版(Velopack)の自動更新。起動時と 24 時間ごとに GitHub Releases を確認し、新しい版を裏でダウンロードする。
-/// 適用はアプリの終了時か「再起動して更新」のときだけ行う。portable 版と E2E では何もしない。
+/// 適用はアプリの終了時か「再起動して更新」のときだけ行う。終了時は、ダウンロード中なら中止して終わるまで待つ。
+/// portable 版と E2E では何もしない。
 /// </summary>
 internal sealed class AppUpdater
 {
@@ -20,6 +21,7 @@ internal sealed class AppUpdater
     readonly DispatcherTimer _timer = new() { Interval = Interval };
     readonly CancellationTokenSource _cts = new();
     Task? _running;
+    Task? _download;
 
     /// <summary>ダウンロード済みで、次の終了時に適用する版。</summary>
     public VelopackAsset? Pending { get; private set; }
@@ -75,8 +77,10 @@ internal sealed class AppUpdater
         try
         {
             var info = await _manager.CheckForUpdatesAsync();
-            if (info == null) return;
-            await _manager.DownloadUpdatesAsync(info, cancelToken: _cts.Token);
+            // 確認の通信中に終了が始まっていたら、ダウンロードを始めない
+            if (info == null || _cts.IsCancellationRequested) return;
+            _download = _manager.DownloadUpdatesAsync(info, cancelToken: _cts.Token);
+            await _download;
             Pending = info.TargetFullRelease;
             Log.Write($"update downloaded version={Pending.Version}");
             PendingChanged?.Invoke();
@@ -93,14 +97,23 @@ internal sealed class AppUpdater
     }
 
     /// <summary>
-    /// 終了の直前に呼ぶ。確認とダウンロードを中止し、終わるまで待つ。
+    /// 終了の直前に呼ぶ。確認とダウンロードを中止し、実行中のダウンロードだけ終わるまで待つ。
     /// ダウンロードは終わりに更新プログラム(Update.exe)を書き換えるため、その途中でプロセスが終わらないようにする。
+    /// 確認の通信は待たない(途中で終わっても害はなく、中止できないため待つと終了が遅れる)。
     /// </summary>
     public async Task StopAsync()
     {
         _timer.Stop();
         _cts.Cancel();
-        if (_running != null) await _running;
+        if (_download == null) return;
+        try
+        {
+            await _download;
+        }
+        catch (Exception)
+        {
+            // 中止も失敗も CheckAsync が処理する。終了処理は止めない
+        }
     }
 
     /// <summary>終了の直前に呼ぶ。ダウンロード済みの更新があれば、終了を待って適用する更新プログラムを起動する。</summary>
