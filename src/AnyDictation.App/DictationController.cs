@@ -50,6 +50,9 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     bool _exiting;
     RecordingStartTrace? _startTrace;
     bool _inputMeterLogged;
+    bool _microphoneReady; // 現在の録音で最初の音声が届いた(開始音を鳴らした)
+    string _startupNote = ""; // 現在の録音で表示する、マイクの起動待ちが長かったことの説明
+    readonly MicrophoneStartupNotice _startupNotice = new();
 
     public event Action<SessionState>? StateChanged;
     public event Action<string, string>? Notice;
@@ -63,6 +66,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _status = status;
         _tick.Tick += (_, _) => OnTick();
         _recorder.Failed += (session, msg) => _dispatcher.BeginInvoke(() => OnRecorderFailed(session, msg));
+        _recorder.Ready += (session, startup) => _dispatcher.BeginInvoke(() => OnMicrophoneReady(session, startup));
         _status.CancelClicked += CancelRecording;
         _status.AbortClicked += AbortRecognition;
         _status.RetryClicked += () => _ = RetryAsync();
@@ -107,6 +111,8 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         var trace = new RecordingStartTrace();
         _startTrace = trace;
         _inputMeterLogged = false;
+        _microphoneReady = false;
+        _startupNote = "";
         trace.Mark("requested");
         // 録音開始前の確認だけ(キーは送信時に取得し直す)
         if (!SendPreflight.TryResolve(_settings, _creds, out var target, out var problem))
@@ -152,10 +158,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _costSessions.Clear();
         _state.Toggle(); // Idle -> Recording
         if (live != null) AttachLive(live);
-        trace.Mark("sound_play_requested");
-        RecordingSounds.Started();
-        trace.Mark("sound_play_call_returned");
-        _tick.Start();
+        _tick.Start(); // 開始音は最初の音声が届いてから鳴らす(OnMicrophoneReady)
         Log.Write($"recording started profile={target!.Profile.Name}");
         RaiseState();
         OnTick();
@@ -245,6 +248,23 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             message + (wasLive
                 ? "\nLive の接続は閉じました。ここまでの録音をメモリに保持しています。「再送」で全体を新しい Live セッションへ送ります(送信済みの分も再度送るため追加課金)。「破棄」もできます。"
                 : "\nここまでの録音をメモリに保持しています(未送信)。「再送」で送信するか、「破棄」してください。"), canRetry: true);
+    }
+
+    /// <summary>
+    /// 最初の音声が届いた時点で開始音を鳴らし、表示を「録音中」にする。
+    /// Bluetooth のハンズフリーマイクなどは起動に 1 秒前後かかり、その間に話した音声は録音されないため。
+    /// </summary>
+    void OnMicrophoneReady(CaptureSession session, TimeSpan startup)
+    {
+        // キューに積まれている間に停止・取消・新しい録音があった場合は無視する
+        if (_state.State != SessionState.Recording || !_recorder.IsCurrent(session)) return;
+        _microphoneReady = true;
+        if (_startupNotice.Take(startup) is { } note) _startupNote = "\n" + note;
+        Log.Write(FormattableString.Invariant($"microphone ready startup_ms={startup.TotalMilliseconds:F0} noticed={_startupNote.Length > 0}"));
+        _startTrace?.Mark("sound_play_requested");
+        RecordingSounds.Started();
+        _startTrace?.Mark("sound_play_call_returned");
+        OnTick();
     }
 
     // ---- Live ----
@@ -544,9 +564,11 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             return;
         }
         var live = _live;
-        Notify(StatusKind.Recording, $"録音中 {e:m\\:ss} / 5:00",
+        Notify(StatusKind.Recording, _microphoneReady ? $"録音中 {e:m\\:ss} / 5:00" : "マイクを準備しています…",
+            (_microphoneReady ? "" : "開始音が鳴ってから話してください。") +
             "もう一度 Ctrl+Win で停止して文字起こしします。" +
-            (live != null ? "\nLive: 録音中から音声を送信しています。取消しても送信済みの音声は取り消せません。" : ""),
+            (live != null ? "\nLive: 録音中から音声を送信しています。取消しても送信済みの音声は取り消せません。" : "") +
+            _startupNote,
             canCancel: true, live: live?.GetPartialTail(MaxLiveChars));
         int? peak = _recorder.ReadInputPeak();
         _status.UpdateInputLevel(peak);

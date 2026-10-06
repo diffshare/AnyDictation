@@ -17,6 +17,9 @@ internal sealed class Recorder : IDisposable
     /// <summary>現在の録音が、停止操作なしに終わった(デバイス切断など)。録音ごとに一度だけ。UI スレッドとは限らない。</summary>
     public event Action<CaptureSession, string>? Failed;
 
+    /// <summary>現在の録音で最初の音声が届いた(マイクの起動が済んだ)。値は開始からの経過時間。録音ごとに一度だけ。UI スレッドとは限らない。</summary>
+    public event Action<CaptureSession, TimeSpan>? Ready;
+
     public int? ReadInputPeak() => _slot.Current?.ReadInputPeak();
 
     public bool IsRecording => _waveIn != null;
@@ -35,14 +38,19 @@ internal sealed class Recorder : IDisposable
         trace?.Mark("device_resolution_completed");
         var session = _slot.Begin(sampleRate, onAudio);
         var w = new WaveIn { DeviceNumber = deviceNumber, WaveFormat = new WaveFormat(sampleRate, 16, 1), BufferMilliseconds = 100 };
-        int bufferLogged = 0;
+        var startup = System.Diagnostics.Stopwatch.StartNew();
+        int bufferReceived = 0;
         int signalLogged = 0;
         w.DataAvailable += (_, e) =>
         {
             session.Append(e.Buffer, e.BytesRecorded); // 閉じた旧セッションへの Append は無視される
-            if (trace == null || e.BytesRecorded == 0 || !_slot.IsCurrent(session)) return;
-            if (System.Threading.Interlocked.Exchange(ref bufferLogged, 1) == 0)
-                trace.Mark("first_audio_buffer_received");
+            if (e.BytesRecorded == 0 || !_slot.IsCurrent(session)) return;
+            if (System.Threading.Interlocked.Exchange(ref bufferReceived, 1) == 0)
+            {
+                trace?.Mark("first_audio_buffer_received");
+                Ready?.Invoke(session, startup.Elapsed);
+            }
+            if (trace == null) return;
             if (System.Threading.Volatile.Read(ref signalLogged) == 0 &&
                 SilenceDetector.MeasurePeak(e.Buffer.AsSpan(0, e.BytesRecorded)) >= SilenceDetector.DefaultThreshold &&
                 System.Threading.Interlocked.Exchange(ref signalLogged, 1) == 0)

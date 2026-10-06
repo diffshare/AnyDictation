@@ -88,7 +88,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="16">
                         <TextBlock Text="音声入力に使うマイク" FontWeight="Bold"/>
-                        <TextBlock Text="すべての接続先に共通です。Windows の既定を選ぶと、録音開始時の既定マイクを使います。" TextWrapping="Wrap" Margin="0,6,0,8"/>
+                        <TextBlock Text="すべての接続先に共通です。Windows の既定を選ぶと、録音開始時の既定マイクを使います。Bluetooth ヘッドセットのハンズフリーマイクは、録音の開始時に音声接続の準備で時間がかかることがあります。開始音はマイクの準備ができてから鳴ります。" TextWrapping="Wrap" Margin="0,6,0,8"/>
                         <ComboBox x:Name="MicrophoneBox" SelectionChanged="OnMicrophoneSelected" Margin="0,0,0,8"/>
                         <Button Content="接続済みマイクを再読み込み" Click="OnRefreshMicrophones" HorizontalAlignment="Left" Padding="10,4"/>
                         <TextBlock Text="入力テスト" FontWeight="Bold" Margin="0,16,0,6"/>
