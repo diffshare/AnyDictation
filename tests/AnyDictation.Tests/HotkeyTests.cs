@@ -365,3 +365,232 @@ public class AudioTests
         Assert.Equal(wav.Length - 8, BitConverter.ToInt32(wav, 4));
     }
 }
+
+public class HotkeyHoldTests
+{
+    const int LC = HotkeyDetector.VkLControl, LW = HotkeyDetector.VkLWin, RW = HotkeyDetector.VkRWin;
+    const int KeyC = 0x43, Shift = 0xA0;
+    const long Hold = HotkeyDetector.HoldThresholdMs;
+
+    [Fact]
+    public void しきい値に満たない押下は従来どおり離したときにToggleする()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 1000);
+        d.Process(LW, true, 1100);
+        Assert.Equal(default, d.Tick(1100 + Hold - 1));
+        var r = d.Process(LW, false, 1100 + Hold - 1);
+        Assert.True(r.Toggle);
+        Assert.False(r.HoldEnd);
+    }
+
+    [Fact]
+    public void Tickの前にしきい値を超えて離したら短押しとして扱わず何も返さない()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        Assert.Equal(default, d.Process(LW, false, Hold + 10)); // タイマー(しきい値+20ms)より先に離した
+        Assert.False(d.Process(RW, true, Hold + 20).InjectMask); // Ctrl を押したままの押し直しでも再成立しない
+        Assert.Equal(default, d.Tick(Hold * 2));
+    }
+
+    [Fact]
+    public void しきい値以上押し続けるとHoldStartになり離したときはToggleではなくHoldEnd()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 1000);
+        d.Process(LW, true, 1100);
+        var start = d.Tick(1100 + Hold);
+        Assert.True(start.HoldStart);
+        Assert.False(start.Toggle);
+        Assert.Equal(default, d.Tick(1100 + Hold + 50)); // HoldStart は 1 回だけ
+
+        var end = d.Process(LC, false, 3000);
+        Assert.True(end.HoldEnd);
+        Assert.False(end.Toggle);
+        Assert.Equal(default, d.Process(LW, false, 3010)); // 残りを離しても何も起きない
+    }
+
+    [Fact]
+    public void 長押しの後は全部離せば次の押下で再び使える()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        d.Tick(Hold);
+        d.Process(LW, false, 2000);
+        d.Process(LC, false, 2000);
+        Assert.True(d.Process(RW, true, 3000).InjectMask == false); // Ctrl が無いので成立しない
+        d.Process(RW, false, 3000);
+        d.Process(LC, true, 4000);
+        Assert.True(d.Process(LW, true, 4000).InjectMask);
+        Assert.True(d.Process(LW, false, 4100).Toggle);
+    }
+
+    [Fact]
+    public void 長押しの途中で片方を押し直しても再成立しない()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        d.Tick(Hold);
+        Assert.True(d.Process(LW, false, 1000).HoldEnd);
+        Assert.False(d.Process(RW, true, 1100).InjectMask);
+        Assert.Equal(default, d.Tick(1100 + Hold));
+    }
+
+    [Fact]
+    public void しきい値の前に他のキーが押されたら長押しにならず発火もしない()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        d.Process(KeyC, true, 100);
+        Assert.Equal(default, d.Tick(Hold + 100));
+        Assert.Equal(default, d.Process(LW, false, 2000));
+    }
+
+    [Fact]
+    public void 先にShiftが押されていたら長押しにならない()
+    {
+        var d = new HotkeyDetector();
+        d.Process(Shift, true, 0);
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        Assert.Equal(default, d.Tick(Hold * 2));
+    }
+
+    [Fact]
+    public void 長押しの成立後に他のキーが押されてもHoldEndは返す()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        d.Tick(Hold);
+        Assert.Equal(default, d.Process(KeyC, true, 1000));
+        Assert.True(d.Process(LC, false, 1100).HoldEnd);
+    }
+
+    [Fact]
+    public void 成立していなければTickは何もしない()
+    {
+        var d = new HotkeyDetector();
+        Assert.Equal(default, d.Tick(10_000));
+        d.Process(LC, true, 0);
+        Assert.Equal(default, d.Tick(10_000)); // Ctrl だけ
+    }
+
+    [Fact]
+    public void Resetで長押しの状態も消える()
+    {
+        var d = new HotkeyDetector();
+        d.Process(LC, true, 0);
+        d.Process(LW, true, 0);
+        d.Tick(Hold);
+        d.Reset();
+        Assert.Equal(default, d.Process(LW, false, 1000));
+    }
+}
+
+public class HoldRecordingGuardTests
+{
+    [Fact]
+    public void 長押しが対象にした録音が続いていれば停止する()
+    {
+        var g = new HoldRecordingGuard();
+        g.Begin(1);
+        Assert.True(g.ShouldStopOnRelease(1, recording: true));
+    }
+
+    [Fact]
+    public void 長押しの途中で取消され別の録音が始まっていてもその録音は止めない()
+    {
+        var g = new HoldRecordingGuard();
+        g.Begin(1);
+        Assert.False(g.ShouldStopOnRelease(2, recording: true));
+    }
+
+    [Fact]
+    public void 録音が終わっていたり対象がなければ停止しない()
+    {
+        var g = new HoldRecordingGuard();
+        g.Begin(1);
+        Assert.False(g.ShouldStopOnRelease(1, recording: false));
+        Assert.False(g.ShouldStopOnRelease(1, recording: true)); // 一度の解放で消費済み
+        g.Begin(0);
+        Assert.False(g.ShouldStopOnRelease(0, recording: true));
+    }
+}
+
+public class RecordingKeyFilterTests
+{
+    const int Esc = RecordingKeyFilter.VkEscape, Enter = RecordingKeyFilter.VkReturn, KeyA = 0x41;
+
+    [Fact]
+    public void 録音中のEscは取消で捕捉しupも捕捉する()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.Cancel, true), f.Process(Esc, true, recording: true));
+        // 取消で録音が終わった後に up が届いても、down と対にして捕捉する
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Esc, false, recording: false));
+        // 対応を使い切った後の up は通す
+        Assert.Equal(default, f.Process(Esc, false, recording: false));
+    }
+
+    [Fact]
+    public void 録音中のEnterは確定で捕捉しキーリピートでは繰り返さない()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.Submit, true), f.Process(Enter, true, true));
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Enter, true, true));
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Enter, true, false));
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Enter, false, false));
+    }
+
+    [Theory]
+    [InlineData(Esc)]
+    [InlineData(Enter)]
+    public void 録音中でなければ何もせず通す(int vk)
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(vk, true, recording: false));
+        Assert.Equal(default, f.Process(vk, false, recording: false));
+    }
+
+    [Fact]
+    public void 録音前に押したキーのupは録音が始まっても通す()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(Enter, true, recording: false));
+        Assert.Equal(default, f.Process(Enter, false, recording: true));
+    }
+
+    [Fact]
+    public void 録音前に通したdownのキーリピートは録音が始まっても通し動作しない()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(Enter, true, recording: false));
+        Assert.Equal(default, f.Process(Enter, true, recording: true)); // トレイから録音を始めた後のリピート
+        Assert.Equal(default, f.Process(Enter, false, recording: true));
+        // up の後の新しい down は通常どおり捕捉する
+        Assert.Equal(RecordingKeyAction.Submit, f.Process(Enter, true, recording: true).Action);
+    }
+
+    [Fact]
+    public void 他のキーは録音中でも通す()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(KeyA, true, true));
+        Assert.Equal(default, f.Process(KeyA, false, true));
+    }
+
+    [Fact]
+    public void Resetで捕捉の記録が消える()
+    {
+        var f = new RecordingKeyFilter();
+        f.Process(Esc, true, true);
+        f.Reset();
+        Assert.Equal(default, f.Process(Esc, false, false));
+    }
+}

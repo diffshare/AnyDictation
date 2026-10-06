@@ -5,17 +5,27 @@ using System.Threading;
 
 namespace AnyDictation.App;
 
+/// <summary>Toggled 以外のフックからの要求。Cancel / Submit は録音中の Esc / Enter、Repaste は Shift+Alt+Z。</summary>
+internal enum HookAction { HoldStart, HoldEnd, Cancel, Submit, Repaste }
+
 /// <summary>
-/// WH_KEYBOARD_LL で Ctrl+Win を監視する。イベントは一切抑制せず、自身の SendInput(OwnMarker)は無視する。
+/// WH_KEYBOARD_LL で Ctrl+Win を監視する。Ctrl+Win 関連のイベントは抑制せず、自身の SendInput(OwnMarker)は無視する。
+/// 抑制するのは録音中の Esc と Enter(と、その up)だけ。Shift+Alt+Z は同じスレッドの RegisterHotKey で受ける。
 /// フックは UI スレッドから切り離した専用スレッド(メッセージループ付き)に置く。UI スレッドが数秒止まっても、
 /// Windows がコールバックの timeout でフックを黙って外す(以後キーが届かない)ことを避けるため。
-/// <see cref="Toggled"/> はそのスレッドで同期的に呼ばれるので、購読側は軽く保ち、重い処理は自分のスレッドへ投げること。
+/// <see cref="Toggled"/> と <see cref="Triggered"/> はそのスレッドで同期的に呼ばれるので、購読側は軽く保ち、重い処理は自分のスレッドへ投げること。
 /// </summary>
 internal sealed class KeyboardHook : IDisposable
 {
     const uint ResetMessage = Native.WM_APP + 1;
+    const int RepasteHotkeyId = 1;
+    const uint VkZ = 0x5A;
 
     readonly HotkeyDetector _detector = new(); // フックスレッドだけが触る
+    readonly RecordingKeyFilter _keys = new(); // フックスレッドだけが触る
+    readonly bool _repasteHotkey;
+    volatile bool _recording; // 録音中か。UI スレッドが書き、フックスレッドが読む
+    UIntPtr _holdTimer; // 長押し判定のスレッドタイマー(フックスレッドだけが触る)
     readonly Native.LowLevelKeyboardProc _proc; // GC されないようフィールドで保持
     readonly UIntPtr _ignoredMarker;
     readonly Action _sendMask;
@@ -24,14 +34,22 @@ internal sealed class KeyboardHook : IDisposable
     IntPtr _hook;
 
     public event Action? Toggled;
+    public event Action<HookAction>? Triggered;
 
-    public KeyboardHook() : this(Native.OwnMarker, () => Native.SendMaskKey(Native.OwnMarker)) { }
+    /// <summary>録音中の間だけ true にする。true の間、Esc と Enter を捕捉する。</summary>
+    public bool Recording { set => _recording = value; }
 
-    /// <summary>ignoredMarker を持つ入力は自分の送出として無視する。テストが本番のフックと干渉しないよう印を差し替えるために公開している。</summary>
-    public KeyboardHook(UIntPtr ignoredMarker, Action sendMask)
+    public KeyboardHook() : this(Native.OwnMarker, () => Native.SendMaskKey(Native.OwnMarker), repasteHotkey: true) { }
+
+    /// <summary>
+    /// ignoredMarker を持つ入力は自分の送出として無視する。テストが本番のフックと干渉しないよう印を差し替えるために公開している。
+    /// テストは Shift+Alt+Z を登録しない(既定)。
+    /// </summary>
+    public KeyboardHook(UIntPtr ignoredMarker, Action sendMask, bool repasteHotkey = false)
     {
         _ignoredMarker = ignoredMarker;
         _sendMask = sendMask;
+        _repasteHotkey = repasteHotkey;
         _proc = Callback;
     }
 
@@ -65,6 +83,9 @@ internal sealed class KeyboardHook : IDisposable
                 return;
             }
             _threadId = Native.GetCurrentThreadId();
+            // 他のアプリが先に登録していれば失敗する。その場合も録音の操作は使えるので、ログだけ残す
+            if (_repasteHotkey && !Native.RegisterHotKey(IntPtr.Zero, RepasteHotkeyId, Native.MOD_ALT | Native.MOD_SHIFT | Native.MOD_NOREPEAT, VkZ))
+                Log.Write($"repaste hotkey not registered win32={Marshal.GetLastWin32Error()}");
         }
         catch (Exception e)
         {
@@ -81,13 +102,44 @@ internal sealed class KeyboardHook : IDisposable
         try
         {
             while (Native.GetMessage(out var msg, IntPtr.Zero, 0, 0) > 0)
-                if (msg.message == ResetMessage) _detector.Reset();
+            {
+                if (msg.message == ResetMessage)
+                {
+                    _detector.Reset();
+                    _keys.Reset();
+                    StopHoldTimer();
+                }
+                else if (msg.message == Native.WM_HOTKEY) Triggered?.Invoke(HookAction.Repaste);
+                else if (msg.message == Native.WM_TIMER && msg.wParam == _holdTimer)
+                {
+                    StopHoldTimer();
+                    if (_detector.Tick(NowMs()).HoldStart) Triggered?.Invoke(HookAction.HoldStart);
+                }
+            }
         }
         finally
         {
+            if (_repasteHotkey) Native.UnregisterHotKey(IntPtr.Zero, RepasteHotkeyId);
+            StopHoldTimer();
             Unhook();
             Log.Write("keyboard hook stopped");
         }
+    }
+
+    static long NowMs() => Stopwatch.GetTimestamp() * 1000 / Stopwatch.Frequency;
+
+    /// <summary>Ctrl+Win が揃った時点から長押しのしきい値の後に判定する。タイマーの刻みで早く届かないよう少し余裕を持たせる。</summary>
+    void StartHoldTimer()
+    {
+        StopHoldTimer();
+        _holdTimer = Native.SetTimer(IntPtr.Zero, UIntPtr.Zero, (uint)HotkeyDetector.HoldThresholdMs + 20, IntPtr.Zero);
+    }
+
+    void StopHoldTimer()
+    {
+        if (_holdTimer == UIntPtr.Zero) return;
+        Native.KillTimer(IntPtr.Zero, _holdTimer);
+        _holdTimer = UIntPtr.Zero;
     }
 
     void Unhook()
@@ -119,9 +171,19 @@ internal sealed class KeyboardHook : IDisposable
                 {
                     int vk = (int)info.vkCode;
                     _detector.Prune(Native.IsPhysicallyDown, vk); // 処理中のキー自身は GetAsyncKeyState が未更新なので除外される
-                    var r = _detector.Process(vk, down);
-                    if (r.InjectMask) _sendMask();
+                    var r = _detector.Process(vk, down, NowMs());
+                    if (r.InjectMask)
+                    {
+                        _sendMask();
+                        StartHoldTimer();
+                    }
                     if (r.Toggle) Toggled?.Invoke();
+                    if (r.HoldEnd) Triggered?.Invoke(HookAction.HoldEnd);
+                    // Esc/Enter も上の detector へ先に渡す(Ctrl+Win の間に挟まれたら、離したときに発火させないため)
+                    var k = _keys.Process(vk, down, _recording);
+                    if (k.Action == RecordingKeyAction.Cancel) Triggered?.Invoke(HookAction.Cancel);
+                    else if (k.Action == RecordingKeyAction.Submit) Triggered?.Invoke(HookAction.Submit);
+                    if (k.Swallow) return (IntPtr)1;
                 }
             }
         }

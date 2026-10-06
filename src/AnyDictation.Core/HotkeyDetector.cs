@@ -1,15 +1,22 @@
 namespace AnyDictation;
 
-/// <summary>検出結果。Toggle は録音の開始/停止要求、InjectMask は Win メニュー抑制用のダミーキー送出要求。</summary>
-public readonly record struct HotkeyResult(bool Toggle, bool InjectMask);
+/// <summary>
+/// 検出結果。Toggle は録音の開始/停止要求、InjectMask は Win メニュー抑制用のダミーキー送出要求。
+/// HoldStart は長押しの成立(押し続けている間の開始要求)、HoldEnd は長押し後の解放(停止要求)。
+/// </summary>
+public readonly record struct HotkeyResult(bool Toggle, bool InjectMask, bool HoldStart = false, bool HoldEnd = false);
 
 /// <summary>
 /// Ctrl + Win の modifier-only 同時押しを検出する純粋な状態機械。イベントは一切抑制しない。
 /// 両キーが揃った時点で「成立」とし、他のキーを挟まずにどちらかが離された時点で Toggle を返す。
 /// 他のキー(Ctrl+Win+矢印など)が押された場合は、全 modifier が離されるまで無効。
+/// 揃ってから他のキーなしで <see cref="HoldThresholdMs"/> 以上押し続けると、離したときの Toggle ではなく
+/// 長押し(HoldStart / HoldEnd)になる。長押しの成立は <see cref="Tick"/> で判定し、時刻は呼び出し側が渡す(時計は読まない)。
+/// 長押しが成立した後に他のキーが押されても、HoldEnd は最初の modifier を離したときに返す。
 /// </summary>
 public sealed class HotkeyDetector
 {
+    public const long HoldThresholdMs = 500;
     public const int VkLControl = 0xA2;
     public const int VkRControl = 0xA3;
     public const int VkLWin = 0x5B;
@@ -21,8 +28,11 @@ public sealed class HotkeyDetector
     bool _armed;
     bool _dirty;
     bool _fired;
+    bool _holding;
+    long _armedAtMs;
 
-    public HotkeyResult Process(int vk, bool isDown)
+    /// <summary>nowMs は単調増加する時刻(ミリ秒)。成立(armed)の時刻の記録にだけ使う。</summary>
+    public HotkeyResult Process(int vk, bool isDown, long nowMs = 0)
     {
         bool isCtrl = vk is VkLControl or VkRControl;
         bool isWin = vk is VkLWin or VkRWin;
@@ -51,21 +61,36 @@ public sealed class HotkeyDetector
             if (!_dirty && !_fired && !_armed && _ctrl.Count > 0 && _win.Count > 0)
             {
                 _armed = true;
+                _armedAtMs = nowMs;
                 return new HotkeyResult(false, true);
             }
             return default;
         }
 
         if (!set.Remove(vk)) return default;
-        bool toggle = _armed;
+        // タイマーの余裕で Tick が遅れても、しきい値を超えて離したものは短押しにしない(長押しが始まる前に離した操作は無視する)
+        bool late = _armed && nowMs - _armedAtMs >= HoldThresholdMs;
+        bool toggle = _armed && !late;
+        bool holdEnd = _holding;
         _armed = false;
-        if (toggle) _fired = true;
+        _holding = false;
+        if (toggle || late) _fired = true;
         if (_ctrl.Count == 0 && _win.Count == 0)
         {
             _dirty = false;
             _fired = false;
         }
-        return new HotkeyResult(toggle, false);
+        return new HotkeyResult(toggle, false, HoldEnd: holdEnd);
+    }
+
+    /// <summary>成立から <see cref="HoldThresholdMs"/> 以上たっていれば長押しにする。キー入力がなくても呼べる。</summary>
+    public HotkeyResult Tick(long nowMs)
+    {
+        if (!_armed || nowMs - _armedAtMs < HoldThresholdMs) return default;
+        _armed = false;
+        _holding = true;
+        _fired = true; // 長押し中は、離したときの Toggle や押し直しでの再成立をさせない
+        return new HotkeyResult(false, false, HoldStart: true);
     }
 
     /// <summary>
@@ -80,6 +105,7 @@ public sealed class HotkeyDetector
         if (_ctrl.Count == 0 && _win.Count == 0)
         {
             _armed = false;
+            _holding = false;
             _dirty = false;
             _fired = false;
         }
@@ -90,6 +116,6 @@ public sealed class HotkeyDetector
         _ctrl.Clear();
         _win.Clear();
         _others.Clear();
-        _armed = _dirty = _fired = false;
+        _armed = _dirty = _fired = _holding = false;
     }
 }

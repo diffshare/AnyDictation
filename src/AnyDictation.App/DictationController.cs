@@ -47,6 +47,9 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     CancellationTokenSource? _cts;
     bool _userAborted;
     bool _delivering; // 通信が完了し、結果の配送中。この間は「中止」を受け付けない
+    long _recordingId; // 録音を始めるたびに増やす識別子(1 から)
+    readonly HoldRecordingGuard _hold = new();
+    bool _repasting; // 履歴の直近の結果を貼り付け直している間(録音と二重にしない)
     bool _exiting;
     RecordingStartTrace? _startTrace;
     bool _inputMeterLogged;
@@ -83,7 +86,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
     public void Toggle()
     {
-        if (_exiting || E2eMode.Enabled) return;
+        if (_exiting || E2eMode.Enabled || _repasting) return;
         if (_microphoneUse.IsTesting)
         {
             Notify(StatusKind.Warning, "マイクの入力テスト中です", "設定画面で入力テストを停止してから録音してください。", TimeSpan.FromSeconds(3), canClose: true);
@@ -103,6 +106,52 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             default:
                 Notify(StatusKind.Failed, "未送信の音声があります", "「再送」で送信するか「破棄」してから、新しい録音を始めてください。", canRetry: true);
                 break;
+        }
+    }
+
+    /// <summary>Ctrl+Win の長押しの成立。待機中なら録音を始める(離すと止める)。すでに録音中なら何もせず、離したときの停止に任せる。</summary>
+    public void HoldStart()
+    {
+        if (_state.State != SessionState.Recording) Toggle();
+        _hold.Begin(_state.State == SessionState.Recording ? _recordingId : 0);
+    }
+
+    /// <summary>Ctrl+Win の長押しの解放。長押しの対象の録音が今も続いていれば停止する。取消や Enter で終わっていれば、その後の別の録音は止めない。</summary>
+    public void HoldEnd()
+    {
+        if (_hold.ShouldStopOnRelease(_recordingId, _state.State == SessionState.Recording)) Toggle();
+    }
+
+    /// <summary>録音中の Enter。通常の停止と同じ経路で認識し、貼り付けに成功したときだけ Enter も送る。</summary>
+    public void SubmitRecording()
+    {
+        if (_exiting || _state.State != SessionState.Recording) return;
+        _ = StopAndRecognizeAsync(auto: false, pressEnter: true);
+    }
+
+    /// <summary>履歴の直近の結果を、通常の配送(貼り付けの判断を含む)でもう一度貼り付ける。待機中だけ受け付ける。</summary>
+    public async void RepasteLast()
+    {
+        if (_exiting || E2eMode.Enabled || _repasting || _state.State != SessionState.Idle || _microphoneUse.IsTesting) return;
+        if (_history.Entries.Count == 0)
+        {
+            Notify(StatusKind.Warning, "履歴がありません", "貼り付け直せる認識結果がまだありません。", TimeSpan.FromSeconds(3), canClose: true);
+            return;
+        }
+        _repasting = true;
+        var target = Native.GetForegroundWindow();
+        _job = new Job { Wav = Array.Empty<byte>(), Target = target, Tracker = new ForegroundTracker(target) };
+        try
+        {
+            var result = await ResultDelivery.RunAsync(this, _history.Entries[0].Text, userAborted: false);
+            Log.Write($"repaste outcome={result.Outcome} reason={result.Decision.Reason}");
+            if (_exiting || result.Outcome == DeliveryOutcome.ExitingSkipped) return;
+            NotifyDelivery(result, "");
+        }
+        finally
+        {
+            DisposeJob();
+            _repasting = false;
         }
     }
 
@@ -157,6 +206,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         }
         _costSessions.Clear();
         _state.Toggle(); // Idle -> Recording
+        _recordingId++;
         if (live != null) AttachLive(live);
         _tick.Start(); // 開始音は最初の音声が届いてから鳴らす(OnMicrophoneReady)
         Log.Write($"recording started profile={target!.Profile.Name}");
@@ -165,7 +215,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         trace.Mark("status_ui_updated");
     }
 
-    async Task StopAndRecognizeAsync(bool auto)
+    async Task StopAndRecognizeAsync(bool auto, bool pressEnter = false)
     {
         if (_state.Toggle() != ToggleOutcome.Stopped) return; // Recording -> Recognizing
         _tick.Stop();
@@ -218,7 +268,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
         _job = new Job { Wav = result.Wav, Target = target, Tracker = tracker };
         string note = (auto ? "5 分に達したため自動停止しました。" : "") + (result.Warning ?? "");
-        await RunRecognitionAsync(note);
+        await RunRecognitionAsync(note, pressEnter);
     }
 
     /// <summary>停止操作なしにマイクが止まった。ここまでの音声は捨てず、未送信のまま「再送(送信)/破棄」の選択にする。</summary>
@@ -314,7 +364,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
     // ---- 認識 ----
 
-    async Task RunRecognitionAsync(string note)
+    async Task RunRecognitionAsync(string note, bool pressEnter = false)
     {
         var job = _job!;
         // 録音中から接続していた Live セッションがあれば、それが今回の録音の送信先(設定が途中で変わっても同じ接続で完結させる)。
@@ -388,7 +438,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         // 通信は完了した。これ以降は「中止」を受け付けず、中止が先に押されていたかだけを見る
         _delivering = true;
         Log.Write("recognition succeeded");
-        await DeliverAsync(text, profile.Name, _userAborted);
+        await DeliverAsync(text, profile.Name, _userAborted, pressEnter);
     }
 
     /// <summary>
@@ -452,7 +502,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
     // ---- 結果の受け渡し(認識成功後。ここで何が起きても API の再送状態にはしない) ----
 
-    async Task DeliverAsync(string text, string profileName, bool abortedFirst)
+    async Task DeliverAsync(string text, string profileName, bool abortedFirst, bool pressEnter)
     {
         string historyNote = "";
         try
@@ -469,14 +519,20 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             Notify(StatusKind.Recognizing, "認識が完了しました",
                 abortedFirst ? "中止の操作より先に認識が完了していました。貼り付けずに結果を保存します。" : "結果を貼り付ける準備をしています(この間は中止できません)。");
 
-        var result = await ResultDelivery.RunAsync(this, text, abortedFirst);
-        Log.Write($"delivery outcome={result.Outcome} reason={result.Decision.Reason}");
+        var result = await ResultDelivery.RunAsync(this, text, abortedFirst, pressEnter);
+        Log.Write($"delivery outcome={result.Outcome} reason={result.Decision.Reason} enter={(pressEnter ? result.EnterSent.ToString() : "-")}");
 
         _state.RecognitionSucceeded();
         DisposeJob();
         RaiseState();
         if (_exiting || result.Outcome == DeliveryOutcome.ExitingSkipped) return;
+        if (pressEnter && result.Outcome == DeliveryOutcome.Pasted && !result.EnterSent)
+            historyNote += "(前面が変わった、または修飾キーが押されていたため、Enter は送っていません)";
+        NotifyDelivery(result, historyNote);
+    }
 
+    void NotifyDelivery(DeliveryResult result, string historyNote)
+    {
         var d = result.Decision;
         switch (result.Outcome)
         {
@@ -536,9 +592,13 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
     bool IDeliveryEnvironment.SendPaste() => Native.SendCtrlV();
 
+    bool IDeliveryEnvironment.ModifierHeld => Native.AnyModifierDown();
+
+    bool IDeliveryEnvironment.SendEnter() => Native.SendEnter();
+
     // ---- 取消・タイマー・終了 ----
 
-    void CancelRecording()
+    public void CancelRecording()
     {
         if (!_state.CancelRecording()) return;
         _tick.Stop();
@@ -566,7 +626,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         var live = _live;
         Notify(StatusKind.Recording, _microphoneReady ? $"録音中 {e:m\\:ss} / 5:00" : "マイクを準備しています…",
             (_microphoneReady ? "" : "開始音が鳴ってから話してください。") +
-            "もう一度 Ctrl+Win で停止して文字起こしします。" +
+            "もう一度 Ctrl+Win で停止して文字起こしします。(Enter: 貼り付け後に改行 / Esc: 取消)" +
             (live != null ? "\nLive: 録音中から音声を送信しています。取消しても送信済みの音声は取り消せません。" : "") +
             _startupNote,
             canCancel: true, live: live?.GetPartialTail(MaxLiveChars));
