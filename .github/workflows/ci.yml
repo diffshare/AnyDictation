@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build AnyDictation.slnx -c Release
+      - name: Unit tests
+        run: dotnet test tests/AnyDictation.Tests -c Release --no-build
+      - name: Build E2E
+        run: dotnet build tests/AnyDictation.E2E -c Release
+      - name: Settings GUI E2E
+        env:
+          ANYDICTATION_RUN_E2E: '1'
+          ANYDICTATION_E2E_SHOTS: ${{ runner.temp }}/shots
+        run: |
+          $env:ANYDICTATION_E2E_EXE = Join-Path $PWD 'src/AnyDictation.App/bin/Release/net10.0-windows/AnyDictation.exe'
+          dotnet test tests/AnyDictation.E2E -c Release --no-build --filter "FullyQualifiedName~SettingsGuiTests" --logger "console;verbosity=normal"
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-gui-screenshots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+
+  # ランナーで低レベルフックと SendInput が動くかは未確認のため、失敗しても CI 全体は失敗にしない
+  keyboard-hook-e2e:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Keyboard hook E2E
+        env:
+          ANYDICTATION_RUN_HOOK_E2E: '1'
+        run: dotnet test tests/AnyDictation.E2E -c Release --filter "FullyQualifiedName~KeyboardHookTests" --logger "console;verbosity=normal"
