@@ -111,6 +111,7 @@ internal sealed class AnyApp : Application
         _hook.Toggled += OnHotkey;
         _hook.Triggered += OnHookAction;
         _controller.StateChanged += state => _hook.Recording = state == SessionState.Recording;
+        _status.EscDismissibleChanged += visible => _hook.NoticeDismissible = visible;
         try
         {
             _hook.Install();
@@ -148,6 +149,7 @@ internal sealed class AnyApp : Application
             case HookAction.HoldEnd: _controller.HoldEnd(); break;
             case HookAction.Cancel: _controller.CancelRecording(); break;
             case HookAction.Submit: _controller.SubmitRecording(); break;
+            case HookAction.DismissNotice: _status.DismissIfEscDismissible(); break;
             case HookAction.Repaste: _controller.RepasteLast(); break;
         }
     });

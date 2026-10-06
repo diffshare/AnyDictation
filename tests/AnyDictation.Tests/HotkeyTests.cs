@@ -578,6 +578,41 @@ public class RecordingKeyFilterTests
     }
 
     [Fact]
+    public void 取消の通知の表示中は録音中でなくてもEscで閉じ_リピートとupも捕捉する()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.Dismiss, true), f.Process(Esc, true, recording: false, dismissible: true));
+        // 通知が消えた後でも、対になるリピートと up は捕捉する
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Esc, true, false, dismissible: false));
+        Assert.Equal(new RecordingKeyResult(RecordingKeyAction.None, true), f.Process(Esc, false, false, dismissible: false));
+        Assert.Equal(default, f.Process(Esc, false, false));
+    }
+
+    [Fact]
+    public void 通知が表示されていなければEscは通す()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(Esc, true, recording: false, dismissible: false));
+        // 通した down のリピートは、通知が出た後でも通す(閉じない)
+        Assert.Equal(default, f.Process(Esc, true, false, dismissible: true));
+        Assert.Equal(default, f.Process(Esc, false, false, dismissible: true));
+    }
+
+    [Fact]
+    public void 録音中のEscは通知の表示中でも取消を優先する()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(RecordingKeyAction.Cancel, f.Process(Esc, true, recording: true, dismissible: true).Action);
+    }
+
+    [Fact]
+    public void 通知の表示中でもEnterには影響しない()
+    {
+        var f = new RecordingKeyFilter();
+        Assert.Equal(default, f.Process(Enter, true, recording: false, dismissible: true));
+    }
+
+    [Fact]
     public void 他のキーは録音中でも通す()
     {
         var f = new RecordingKeyFilter();

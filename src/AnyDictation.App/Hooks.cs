@@ -6,7 +6,7 @@ using System.Threading;
 namespace AnyDictation.App;
 
 /// <summary>Toggled 以外のフックからの要求。Cancel / Submit は録音中の Esc / Enter、Repaste は Shift+Alt+Z。</summary>
-internal enum HookAction { HoldStart, HoldEnd, Cancel, Submit, Repaste }
+internal enum HookAction { HoldStart, HoldEnd, Cancel, Submit, DismissNotice, Repaste }
 
 /// <summary>
 /// WH_KEYBOARD_LL で Ctrl+Win を監視する。Ctrl+Win 関連のイベントは抑制せず、自身の SendInput(OwnMarker)は無視する。
@@ -24,6 +24,7 @@ internal sealed class KeyboardHook : IDisposable
     readonly HotkeyDetector _detector = new(); // フックスレッドだけが触る
     readonly RecordingKeyFilter _keys = new(); // フックスレッドだけが触る
     readonly bool _repasteHotkey;
+    volatile bool _noticeDismissible; // 取消の通知が表示中か。UI スレッドが書き、フックスレッドが読む
     volatile bool _recording; // 録音中か。UI スレッドが書き、フックスレッドが読む
     UIntPtr _holdTimer; // 長押し判定のスレッドタイマー(フックスレッドだけが触る)
     readonly Native.LowLevelKeyboardProc _proc; // GC されないようフィールドで保持
@@ -38,6 +39,9 @@ internal sealed class KeyboardHook : IDisposable
 
     /// <summary>録音中の間だけ true にする。true の間、Esc と Enter を捕捉する。</summary>
     public bool Recording { set => _recording = value; }
+
+    /// <summary>Esc で閉じられる通知が表示されている間だけ true にする。録音中でなければ、その間の Esc を捕捉して通知を閉じる。</summary>
+    public bool NoticeDismissible { set => _noticeDismissible = value; }
 
     public KeyboardHook() : this(Native.OwnMarker, () => Native.SendMaskKey(Native.OwnMarker), repasteHotkey: true) { }
 
@@ -180,9 +184,10 @@ internal sealed class KeyboardHook : IDisposable
                     if (r.Toggle) Toggled?.Invoke();
                     if (r.HoldEnd) Triggered?.Invoke(HookAction.HoldEnd);
                     // Esc/Enter も上の detector へ先に渡す(Ctrl+Win の間に挟まれたら、離したときに発火させないため)
-                    var k = _keys.Process(vk, down, _recording);
+                    var k = _keys.Process(vk, down, _recording, _noticeDismissible);
                     if (k.Action == RecordingKeyAction.Cancel) Triggered?.Invoke(HookAction.Cancel);
                     else if (k.Action == RecordingKeyAction.Submit) Triggered?.Invoke(HookAction.Submit);
+                    else if (k.Action == RecordingKeyAction.Dismiss) Triggered?.Invoke(HookAction.DismissNotice);
                     if (k.Swallow) return (IntPtr)1;
                 }
             }
