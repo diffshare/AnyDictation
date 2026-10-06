@@ -157,6 +157,8 @@ internal sealed class AnyApp : Application
 
     void OnUpdateReady()
     {
+        // 終了処理中は、破棄済みのトレイなどを触らない。Pending は設定済みなので終了時に適用される
+        if (_exiting) return;
         string version = _updater!.Pending!.Version.ToString();
         _tray.ShowUpdateReady(version);
         _settingsWindow.ShowUpdateState(_versionText + $"{version} の準備ができました。終了時に更新します。", canApply: true);
@@ -176,7 +178,7 @@ internal sealed class AnyApp : Application
     }
 
     /// <summary>本当の終了。録音と通信を止め、メモリ上の音声を消して、フックとトレイを解放する。ダウンロード済みの更新があれば適用する。</summary>
-    void RequestExit(bool restart)
+    async void RequestExit(bool restart)
     {
         if (_exiting) return;
         if (_controller.HasUnsentAudio &&
@@ -194,6 +196,8 @@ internal sealed class AnyApp : Application
         _status.Close();
         _settingsWindow.AllowClose = true;
         _settingsWindow.Close();
+        // 利用者からは終了済みに見える。更新のダウンロード中にプロセスが終わらないよう、止めて待つ(確認の例外は CheckAsync が処理済み)
+        if (_updater != null) await _updater.StopAsync();
         _updater?.ApplyOnExit(restart);
         Shutdown();
     }

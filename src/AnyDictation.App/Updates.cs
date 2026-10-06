@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 using Velopack;
@@ -17,7 +18,8 @@ internal sealed class AppUpdater
 
     readonly UpdateManager _manager = CreateManager();
     readonly DispatcherTimer _timer = new() { Interval = Interval };
-    bool _checking;
+    readonly CancellationTokenSource _cts = new();
+    Task? _running;
 
     /// <summary>ダウンロード済みで、次の終了時に適用する版。</summary>
     public VelopackAsset? Pending { get; private set; }
@@ -55,40 +57,56 @@ internal sealed class AppUpdater
         if (!IsInstalled) return;
         Pending = _manager.UpdatePendingRestart;
         if (Pending != null) PendingChanged?.Invoke();
-        _timer.Tick += async (_, _) => await CheckAsync();
+        _timer.Tick += (_, _) => StartCheck();
         _timer.Start();
-        _ = CheckAsync();
+        StartCheck();
+    }
+
+    void StartCheck()
+    {
+        if (_running is { IsCompleted: false }) return;
+        _running = CheckAsync();
     }
 
     async Task CheckAsync()
     {
-        if (_checking) return;
-        _checking = true;
+        // ダウンロード済みの版がある間は確認しない。次の版のダウンロードで、その版のパッケージが消えるため
+        if (Pending != null) return;
         try
         {
             var info = await _manager.CheckForUpdatesAsync();
-            if (info == null || info.TargetFullRelease.Version == Pending?.Version) return;
-            await _manager.DownloadUpdatesAsync(info);
+            if (info == null) return;
+            await _manager.DownloadUpdatesAsync(info, cancelToken: _cts.Token);
             Pending = info.TargetFullRelease;
             Log.Write($"update downloaded version={Pending.Version}");
             PendingChanged?.Invoke();
+        }
+        catch (OperationCanceledException) when (_cts.IsCancellationRequested)
+        {
+            // 終了のための中止
         }
         catch (Exception ex)
         {
             // 通信の失敗などは次回の確認で再試行する。利用者には通知しない
             Log.Write($"update check failed {ex.GetType().Name}");
         }
-        finally
-        {
-            _checking = false;
-        }
+    }
+
+    /// <summary>
+    /// 終了の直前に呼ぶ。確認とダウンロードを中止し、終わるまで待つ。
+    /// ダウンロードは終わりに更新プログラム(Update.exe)を書き換えるため、その途中でプロセスが終わらないようにする。
+    /// </summary>
+    public async Task StopAsync()
+    {
+        _timer.Stop();
+        _cts.Cancel();
+        if (_running != null) await _running;
     }
 
     /// <summary>終了の直前に呼ぶ。ダウンロード済みの更新があれば、終了を待って適用する更新プログラムを起動する。</summary>
     public void ApplyOnExit(bool restart)
     {
         if (Pending == null) return;
-        _timer.Stop();
         Log.Write($"update apply on exit version={Pending.Version} restart={restart}");
         try
         {
