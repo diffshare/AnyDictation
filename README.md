@@ -16,7 +16,23 @@ Windows 向けの音声入力アプリです。Ctrl + Windows キーで録音を
 - Windows 11（x64）で動作を確認しています
 - ビルドには .NET 10 SDK が必要です
 
-## ビルドと起動
+## インストール
+
+[Releases](https://github.com/diffshare/AnyDictation/releases/latest) から `diffshare.AnyDictation-win-Setup.exe` をダウンロードして実行します。管理者権限は不要で、`%LOCALAPPDATA%\diffshare.AnyDictation` にインストールします。初回の起動では設定画面が開きます。
+
+インストーラーとアプリにはコード署名をしていません。そのため、実行時に「Windows によって PC が保護されました」と表示されることがあります。続ける場合は「詳細情報」を押してから「実行」を押します。
+
+### 更新
+
+インストール版は、起動時と 24 時間ごとに新しい版を確認し、見つかると自動でダウンロードします。準備ができると通知し、トレイのメニューか設定画面の「一般」で「再起動して更新」を選んだとき、またはアプリを終了したときに更新します。録音中、認識中、再送待ちの間は更新しません。自動更新をオフにする設定はありません。更新を避けたい場合は、次の portable 版を使います。
+
+### アンインストール
+
+Windows の「設定」の「アプリ」から Any Dictation をアンインストールします。設定、履歴、ログ（`%LOCALAPPDATA%\AnyDictation`）と、資格情報マネージャーの API キー（`AnyDictation/credential/…`）は残ります。不要なら手動で削除します。
+
+## portable 版のビルドと起動
+
+portable 版は自動更新しません。
 
 ```powershell
 dotnet publish src/AnyDictation.App -c Release -r win-x64 -p:SelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist/self-contained
@@ -56,7 +72,7 @@ Live は録音中から音声を送信します。取消、中止、失敗の前
 | プロファイル | 接続先、モデル、言語、API キー、使用するプロファイル |
 | マイク | 使うマイクの選択と入力テスト |
 | 履歴 | 直近 20 件の認識結果（文章のみ）のコピーと削除 |
-| 一般 | Windows へのサインイン時の自動起動、直近の Live 利用、保存場所 |
+| 一般 | Windows へのサインイン時の自動起動、直近の Live 利用、保存場所、更新 |
 | 使い方 | 操作と状態表示の見方 |
 
 設定、履歴、ログは `%LOCALAPPDATA%\AnyDictation` に保存します。
@@ -88,6 +104,10 @@ finally { Remove-Item Env:ANYDICTATION_RUN_E2E, Env:ANYDICTATION_E2E_EXE -ErrorA
 E2E は `TEMP/AnyDictation.E2E/<GUID>` に隔離した設定を使い、普段の設定、履歴、資格情報には触れません。`ANYDICTATION_E2E_SHOTS` に出力先を指定すると、各画面のスクリーンショットを保存します。
 
 内部設計、通信の形、テストの範囲、実フックの E2E の実行方法は [docs/design.md](docs/design.md) にあります。
+
+### リリース
+
+`main` のコミットに `vX.Y.Z` 形式のタグを push すると、`.github/workflows/release.yml` が単体テスト、publish、Velopack でのパッケージ作成を行い、GitHub Releases に公開します。アプリのバージョンにはタグの値を使います。
 
 ## ライセンス
 

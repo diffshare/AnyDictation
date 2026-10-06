@@ -63,6 +63,14 @@ internal static class StartupRegistration
         if (enabled) key.SetValue(ValueName, Command);
         else key.DeleteValue(ValueName, throwOnMissingValue: false);
     }
+
+    /// <summary>アンインストール時に呼ぶ。この exe を指す値だけを削除し、portable 版など別の exe を指す値は残す。</summary>
+    public static void RemoveIfOwned()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        if (key?.GetValue(ValueName) is string value && string.Equals(value, Command, StringComparison.OrdinalIgnoreCase))
+            key.DeleteValue(ValueName, throwOnMissingValue: false);
+    }
 }
 
 internal static class ClipboardHelper

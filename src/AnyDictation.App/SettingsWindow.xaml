@@ -145,6 +145,9 @@
                         <TextBlock Text="保存場所" FontWeight="Bold" Margin="0,16,0,4"/>
                         <TextBlock x:Name="PathText" TextWrapping="Wrap"/>
                         <Button Content="フォルダを開く" HorizontalAlignment="Left" Padding="10,3" Margin="0,6,0,0" Click="OnOpenDataFolder"/>
+                        <TextBlock Text="更新" FontWeight="Bold" Margin="0,16,0,4"/>
+                        <TextBlock x:Name="UpdateText" TextWrapping="Wrap"/>
+                        <Button x:Name="UpdateButton" Content="再起動して更新" HorizontalAlignment="Left" Padding="10,3" Margin="0,6,0,0" Visibility="Collapsed" Click="OnUpdateClicked"/>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

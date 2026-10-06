@@ -16,6 +16,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AnyDictation.E2E" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
     <ProjectReference Include="..\AnyDictation.Core\AnyDictation.Core.csproj" />
     <PackageReference Include="NAudio.WinMM" Version="3.1.0" />
   </ItemGroup>
