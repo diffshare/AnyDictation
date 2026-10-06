@@ -1,0 +1,441 @@
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using FlaUI.Core;
+using FlaUI.Core.AutomationElements;
+using FlaUI.UIA3;
+using Xunit;
+using Xunit.Abstractions;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
+namespace AnyDictation.E2E;
+
+public sealed class GuiFactAttribute : FactAttribute
+{
+    public GuiFactAttribute()
+    {
+        if (Environment.GetEnvironmentVariable("ANYDICTATION_RUN_E2E") != "1")
+            Skip = "明示実行には ANYDICTATION_RUN_E2E=1 と ANYDICTATION_E2E_EXE が必要です。";
+    }
+}
+
+public sealed class SettingsGuiTests(ITestOutputHelper output)
+{
+    [GuiFact]
+    public void LiveProfileWithoutRatePersistsAcrossRestart()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            Assert.False(run.Exists("DirtyText")); // 起動直後の読み込みでは未保存にならない
+            run.InvokeName("Azure OpenAI Live を追加");
+            run.Set("NameBox", "E2E Live");
+            run.Set("EndpointBox", "https://e2e.invalid/");
+            run.Set("ModelBox", "e2e-deployment");
+            run.Set("LanguageBox", "ja");
+            Assert.Equal("", run.Value("LiveRateBox"));
+            Assert.True(run.Exists("DirtyText"));
+            run.SelectName("履歴"); // 保存はどのタブからでも押せる
+            run.Invoke("SaveButton");
+            run.WaitFor(() => File.Exists(run.Settings));
+            Assert.False(run.Exists("DirtyText"));
+            using (var saved = JsonDocument.Parse(File.ReadAllText(run.Settings)))
+            {
+                var profile = saved.RootElement.GetProperty("Profiles")[0];
+                Assert.Equal("E2E Live", profile.GetProperty("Name").GetString());
+                Assert.Equal(JsonValueKind.Null, profile.GetProperty("LiveUsdPerMinute").ValueKind);
+            }
+            run.Restart();
+            Assert.Equal("E2E Live", run.Value("NameBox"));
+            Assert.Equal("https://e2e.invalid/", run.Value("EndpointBox"));
+            Assert.Equal("e2e-deployment", run.Value("ModelBox"));
+            Assert.Equal("ja", run.Value("LanguageBox"));
+            Assert.Equal("", run.Value("LiveRateBox"));
+        });
+    }
+
+    [GuiFact]
+    public void InvalidLiveRateDoesNotOverwriteSavedProfileAndValidRatePersists()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            run.InvokeName("Azure OpenAI Live を追加");
+            run.Set("EndpointBox", "https://e2e.invalid/");
+            run.Invoke("SaveButton");
+            run.WaitFor(() => File.Exists(run.Settings));
+            string original = File.ReadAllText(run.Settings);
+            foreach (var invalid in new[] { "abc", "0", "-0.017" })
+            {
+                run.Set("LiveRateBox", invalid);
+                run.Invoke("SaveButton");
+                run.WaitFor(() => run.Element("SaveResultText").Name.Contains("単価"));
+                Assert.Equal(original, File.ReadAllText(run.Settings));
+                Assert.True(run.Exists("DirtyText")); // 失敗した保存は未保存のまま残る
+            }
+            run.Set("LiveRateBox", "-0.5"); // 追加の編集でエラー表示を消さない
+            Assert.Contains("単価", run.Element("SaveResultText").Name);
+            run.Set("LiveRateBox", "0.017");
+            run.Invoke("SaveButton");
+            run.WaitFor(() => File.ReadAllText(run.Settings) != original);
+            Assert.False(run.Exists("DirtyText"));
+            run.Restart();
+            Assert.Equal("0.017", run.Value("LiveRateBox"));
+        });
+    }
+
+    [GuiFact]
+    public void EmptyHistoryAndGeneralTabsAreUsableWithoutExternalActions()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            run.SelectName("履歴");
+            Assert.Empty(run.Element("HistoryList").FindAllChildren(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.DataItem)));
+            run.SelectName("一般");
+            Assert.Contains("まだ Live", run.Element("LastLiveCostText").Name);
+            Assert.False(run.Element("StartupBox").IsEnabled);
+            Assert.Contains(run.DataDir, run.Element("PathText").Name);
+            run.SelectName("使い方");
+            run.SelectName("マイク");
+            Assert.False(run.Element("MicrophoneStartButton").IsEnabled);
+            Assert.False(run.Element("MicrophoneStopButton").IsEnabled);
+            Assert.False(run.Exists("DirtyText")); // タブを巡っても未保存にならない
+        });
+    }
+
+    [GuiFact]
+    public void SaveBarAndEveryControlAreReachableOnEveryTabAtDefaultAndMinimumSize()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            Assert.Equal(["プロファイル", "マイク", "履歴", "一般", "使い方"], run.TabNames());
+            run.InvokeName("Azure OpenAI Live を追加"); // Live の追加欄まで含めた最も縦長のフォームで確認する
+            run.Shot("プロファイル-default-live");
+            var controlsByTab = new (string Tab, string[] Ids)[]
+            {
+                ("プロファイル", ["NameBox", "ProviderBox", "EndpointBox", "ModelBox", "LanguageBox", "LiveRateBox", "KeyBox", "UseButton"]),
+                ("マイク", ["MicrophoneBox", "MicrophoneStopButton"]),
+                ("履歴", ["HistoryList"]),
+                ("一般", ["StartupBox", "PathText"]),
+                ("使い方", []),
+            };
+            foreach (var size in new[] { "default", "min" })
+            {
+                if (size == "min") run.ShrinkToMinimum(); // MinWidth / MinHeight に丸められる
+                foreach (var (tab, ids) in controlsByTab)
+                {
+                    run.SelectName(tab);
+                    run.Settle();
+                    run.AssertReachable("SaveButton");
+                    Assert.True(run.Element("SaveButton").Properties.IsKeyboardFocusable.Value);
+                    foreach (var id in ids) run.AssertReachable(id);
+                    run.Shot($"{tab}-{size}");
+                }
+            }
+            run.SelectName("プロファイル");
+            run.Set("LiveRateBox", "0.017"); // 最小サイズでも未保存表示と結果表示が保存ボタンを押し出さない
+            run.Settle();
+            run.AssertReachable("DirtyText");
+            run.AssertReachable("SaveButton");
+            run.Shot("プロファイル-min-dirty");
+        });
+    }
+
+    [GuiFact]
+    public void UseTargetShowsSavedAndAfterSaveStatesAndPersists()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            run.InvokeName("Azure MAI を追加");
+            Assert.Equal("", run.Value("EndpointBox")); // 既定値は持たず、入力例だけを表示する
+            Assert.Equal("https://<resource>.cognitiveservices.azure.com/", run.Element("EndpointPlaceholder").Name);
+            run.Set("NameBox", "A");
+            run.Set("EndpointBox", "https://e2e.invalid/");
+            Assert.False(run.Exists("EndpointPlaceholder"));
+            run.InvokeName("OpenAI / 互換を追加");
+            run.Set("NameBox", "B");
+            // 未保存の A が最初の追加で使用先になっている。B を表示中は「保存後の使用先: A」
+            Assert.Contains("保存済み): なし", run.Element("ActiveText").Name);
+            Assert.Contains("保存後の使用先: 「A」", run.Element("ActiveText").Name);
+            Assert.True(run.Element("UseButton").IsEnabled);
+            run.Invoke("UseButton");
+            Assert.Contains("保存後の使用先: このプロファイル", run.Element("ActiveText").Name);
+            Assert.False(run.Element("UseButton").IsEnabled);
+            run.Shot("use-unsaved");
+            run.Invoke("SaveButton");
+            run.WaitFor(() => File.Exists(run.Settings));
+            run.WaitFor(() => !run.Exists("DirtyText"));
+            Assert.Contains("保存済み): このプロファイル", run.Element("ActiveText").Name);
+            Assert.Contains("(変更なし)", run.Element("ActiveText").Name);
+
+            run.SelectListItem("ProfileList", "A");
+            Assert.False(run.Exists("DirtyText")); // 選択だけでは未保存にならない
+            Assert.Contains("保存済み): 「B」", run.Element("ActiveText").Name);
+            Assert.Contains("保存後の使用先: 「B」(変更なし)", run.Element("ActiveText").Name);
+            run.Invoke("UseButton");
+            Assert.True(run.Exists("DirtyText"));
+            Assert.Contains("保存後の使用先: このプロファイル", run.Element("ActiveText").Name);
+            run.Shot("use-switch-unsaved");
+            run.Restart(); // 保存せず閉じると、使用先の切替は破棄される
+            Assert.False(run.Exists("DirtyText"));
+            run.SelectListItem("ProfileList", "A");
+            Assert.Contains("保存済み): 「B」", run.Element("ActiveText").Name);
+            run.Invoke("UseButton");
+            run.Invoke("SaveButton");
+            run.WaitFor(() => !run.Exists("DirtyText"));
+            using var saved = JsonDocument.Parse(File.ReadAllText(run.Settings));
+            var profiles = saved.RootElement.GetProperty("Profiles").EnumerateArray().ToList();
+            string idOfA = profiles.Single(p => p.GetProperty("Name").GetString() == "A").GetProperty("Id").GetString()!;
+            Assert.Equal(idOfA, saved.RootElement.GetProperty("ActiveProfileId").GetString());
+        });
+    }
+
+    [GuiFact]
+    public void CorruptSettingsAreProtectedInRealWindow()
+    {
+        using var run = new GuiRun(output);
+        File.WriteAllText(run.Settings, "{invalid-json");
+        run.Check(() =>
+        {
+            run.Start();
+            Assert.False(run.Element("SaveButton").IsEnabled);
+            Assert.Contains("上書きせず保持", run.Element("SettingsCorruptText").Name);
+            Assert.Equal("{invalid-json", File.ReadAllText(run.Settings));
+        });
+    }
+
+    [GuiFact]
+    public void InvalidIsolationPathsExitWithoutOpeningNormalApp()
+    {
+        using var run = new GuiRun(output);
+        run.Start();
+        using (var duplicate = GuiRun.Launch(run.DataDir))
+        {
+            Assert.True(duplicate.WaitForExit(10000));
+            Assert.Equal(3, duplicate.ExitCode);
+        }
+        File.Delete(Path.Combine(run.DataDir, ".anydictation-e2e"));
+        foreach (var path in new[] { run.DataDir, Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) })
+        {
+            using var process = GuiRun.Launch(path);
+            Assert.True(process.WaitForExit(10000));
+            Assert.Equal(2, process.ExitCode);
+            Assert.False(File.Exists(run.Settings));
+        }
+    }
+}
+
+internal sealed class GuiRun : IDisposable
+{
+    readonly ITestOutputHelper _output;
+    readonly UIA3Automation _automation = new();
+    Process? _process;
+    Application? _app;
+    Window? _window;
+    public string DataDir { get; }
+    public string Settings => Path.Combine(DataDir, "settings.json");
+
+    public GuiRun(ITestOutputHelper output)
+    {
+        _output = output;
+        string id = Guid.NewGuid().ToString("N");
+        DataDir = Path.Combine(Path.GetTempPath(), "AnyDictation.E2E", id);
+        Directory.CreateDirectory(DataDir);
+        File.WriteAllText(Path.Combine(DataDir, ".anydictation-e2e"), id);
+        output.WriteLine("E2E artifacts: " + DataDir);
+    }
+
+    public static Process Launch(string dataDir)
+    {
+        string exe = Environment.GetEnvironmentVariable("ANYDICTATION_E2E_EXE") ??
+            throw new InvalidOperationException("ANYDICTATION_E2E_EXE にテスト用ビルドの exe の絶対パスを指定してください。");
+        if (!Path.IsPathFullyQualified(exe) || !File.Exists(exe) || Path.GetFileName(exe) != "AnyDictation.exe")
+            throw new InvalidOperationException("テスト用 AnyDictation.exe の絶対パスが必要です。");
+        var info = new ProcessStartInfo(exe) { UseShellExecute = false };
+        info.ArgumentList.Add("--e2e-data-dir=" + dataDir);
+        return Process.Start(info) ?? throw new InvalidOperationException("テスト用プロセスを起動できません。");
+    }
+
+    public void Start()
+    {
+        _process = Launch(DataDir);
+        _app = Application.Attach(_process.Id);
+        _window = _app.GetMainWindow(_automation, TimeSpan.FromSeconds(15)) ??
+            throw new InvalidOperationException("設定ウィンドウを取得できません。対話デスクトップと UIA のアクセスを確認してください。");
+        Assert.Equal(_process.Id, _window.Properties.ProcessId.Value);
+    }
+
+    // タブを切り替えた直後は UIA ツリーの反映が遅れるため、短時間だけ待つ。
+    public AutomationElement Element(string id)
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            if (_window!.FindFirstDescendant(cf => cf.ByAutomationId(id)) is { } found) return found;
+            if (clock.Elapsed > TimeSpan.FromSeconds(2)) throw new InvalidOperationException("UIA 要素が見つかりません: " + id);
+            Thread.Sleep(50);
+        }
+    }
+    public void Set(string id, string value) => Element(id).Patterns.Value.Pattern.SetValue(value);
+    public string Value(string id) => Element(id).Patterns.Value.Pattern.Value.Value;
+    public void Invoke(string id) => Element(id).Patterns.Invoke.Pattern.Invoke();
+    // 折りたたまれた要素は UIA に残るが IsOffscreen になるため、画面上にあるものだけを「ある」とみなす。
+    public bool Exists(string id) =>
+        _window!.FindFirstDescendant(cf => cf.ByAutomationId(id)) is { } e && !e.Properties.IsOffscreen.Value;
+    public string[] TabNames() => Element("Tabs").FindAllChildren(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.TabItem))
+        .Select(x => x.Name).ToArray();
+    public void SelectListItem(string listId, string text) => Element(listId)
+        .FindAllDescendants(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.ListItem))
+        .First(x => x.Name.TrimStart('●', '　', ' ') == text).Patterns.SelectionItem.Pattern.Select();
+    public void Settle() => Thread.Sleep(300);
+
+    // Transform パターンで MinWidth / MinHeight まで縮める(UIA 操作のみ。実マウスは使わない)。
+    public void ShrinkToMinimum()
+    {
+        // UIA は呼び出しスレッドの DPI 認識で座標を解釈する。非対応のままだと仮想化された座標になり、最小値へ縮まない。
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try { _window!.Patterns.Transform.Pattern.Resize(100, 100); }
+        finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+        Settle();
+        var (width, height, dpi) = PhysicalSize();
+        _output.WriteLine($"min size: UIA {_window.BoundingRectangle.Width}x{_window.BoundingRectangle.Height}, physical {width}x{height} px at {dpi} dpi");
+    }
+
+    // ウィンドウ内、かつ祖先のスクロール領域の表示範囲内にあれば到達済み。WPF の IsOffscreen はスクロールの切り取りを反映しない。
+    // 範囲外なら、最寄りの縦スクロール領域を 10% ずつ送って探す。
+    public void AssertReachable(string id)
+    {
+        var element = Element(id);
+        AutomationElement? scrollArea = null;
+        for (var p = element.Parent; p != null && scrollArea == null; p = p.Parent)
+            if (p.Patterns.Scroll.TryGetPattern(out var scroll) && scroll.VerticallyScrollable.Value) scrollArea = p;
+        bool Visible()
+        {
+            var inner = element.BoundingRectangle;
+            var outer = _window!.BoundingRectangle;
+            var clip = scrollArea?.BoundingRectangle ?? outer;
+            return !element.Properties.IsOffscreen.Value && outer.Contains(inner) && clip.Contains(inner);
+        }
+        for (int percent = 0; !Visible() && scrollArea != null && percent <= 100; percent += 10)
+        {
+            scrollArea.Patterns.Scroll.Pattern.SetScrollPercent(-1, percent); // -1 は横方向を動かさない(UIA の NoScroll)
+            Settle();
+        }
+        Assert.True(Visible(), $"{id} に到達できません: {element.BoundingRectangle} / window {_window!.BoundingRectangle}");
+    }
+
+    public void Shot(string name)
+    {
+        string dir = Environment.GetEnvironmentVariable("ANYDICTATION_E2E_SHOTS") is { Length: > 0 } custom ? custom : Path.Combine(DataDir, "shots");
+        Directory.CreateDirectory(dir);
+        Settle();
+        string path = Path.Combine(dir, name + ".png");
+        SaveOwnWindow(path);
+        _output.WriteLine("screenshot: " + path);
+    }
+
+    public void InvokeName(string name) => (_window!.FindFirstDescendant(cf => cf.ByName(name)) ??
+        throw new InvalidOperationException(name)).Patterns.Invoke.Pattern.Invoke();
+    public void SelectName(string name) => (_window!.FindFirstDescendant(cf => cf.ByName(name)) ??
+        throw new InvalidOperationException(name)).Patterns.SelectionItem.Pattern.Select();
+    public void WaitFor(Func<bool> predicate)
+    {
+        var clock = Stopwatch.StartNew();
+        while (clock.Elapsed < TimeSpan.FromSeconds(5))
+        {
+            if (predicate()) return;
+            Thread.Sleep(50);
+        }
+        Assert.True(predicate(), "GUI 状態変化の待機がタイムアウトしました。");
+    }
+
+    public void Check(Action test)
+    {
+        try { test(); }
+        catch (Exception e)
+        {
+            File.WriteAllText(Path.Combine(DataDir, "failure.txt"), e.ToString());
+            if (_window != null)
+            {
+                try
+                {
+                    SaveOwnWindow();
+                    var elements = _window.FindAllDescendants();
+                    File.WriteAllLines(Path.Combine(DataDir, "uia-tree.txt"), elements.Select(x =>
+                        x.AutomationId + " | " + x.ControlType + " | " + x.Name));
+                }
+                catch (Exception diagnostic) { _output.WriteLine("診断取得失敗: " + diagnostic.GetType().Name); }
+            }
+            throw;
+        }
+    }
+
+    // PrintWindow は自身の HWND のみ描画し、背後のユーザーアプリを撮影しない。
+    void SaveOwnWindow(string? path = null)
+    {
+        var hwnd = (IntPtr)_window!.Properties.NativeWindowHandle.Value;
+        // テストプロセスが DPI 非対応だと、GetWindowRect が仮想化された小さい寸法を返し、画像が途中で切れる。
+        // この呼び出しの間だけ、スレッドを Per-Monitor v2 にして実寸を取る。
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try { SaveOwnWindowCore(hwnd, path); }
+        finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+    }
+
+    (int Width, int Height, uint Dpi) PhysicalSize()
+    {
+        var hwnd = (IntPtr)_window!.Properties.NativeWindowHandle.Value;
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        try
+        {
+            GetWindowRect(hwnd, out var rect);
+            return (rect.Right - rect.Left, rect.Bottom - rect.Top, GetDpiForWindow(hwnd));
+        }
+        finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+    }
+
+    void SaveOwnWindowCore(IntPtr hwnd, string? path)
+    {
+        if (!GetWindowRect(hwnd, out var rect)) return;
+        using var image = new Bitmap(rect.Right - rect.Left, rect.Bottom - rect.Top);
+        using var graphics = Graphics.FromImage(image);
+        var dc = graphics.GetHdc();
+        bool captured;
+        try { captured = PrintWindow(hwnd, dc, 2); }
+        finally { graphics.ReleaseHdc(dc); }
+        if (captured) image.Save(path ?? Path.Combine(DataDir, "failure.png"), ImageFormat.Png);
+    }
+
+    public void Restart() { Stop(); Start(); }
+    void Stop()
+    {
+        if (_process == null) return;
+        try
+        {
+            if (!_process.HasExited)
+            {
+                _window?.Patterns.Window.Pattern.Close();
+                if (!_process.WaitForExit(5000)) { _process.Kill(); _process.WaitForExit(5000); }
+            }
+        }
+        finally { _app?.Dispose(); _process.Dispose(); _app = null; _process = null; _window = null; }
+    }
+    public void Dispose() { Stop(); _automation.Dispose(); }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr window);
+    [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect rect);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
+}
