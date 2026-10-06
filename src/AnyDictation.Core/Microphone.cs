@@ -5,7 +5,15 @@ public sealed record MicrophoneDevice(int Number, string? Id, string Name);
 public static class MicrophoneSelection
 {
     /// <summary>一覧と既定の表示で同じ名前を出す。番号は WinMM の列挙順(1 始まりで表示)。ProductName は WinMM の制限で 31 文字までに切れる。</summary>
-    public static string Display(MicrophoneDevice device) => $"{device.Name}［{device.Number + 1}］";
+    public static string Display(MicrophoneDevice device) =>
+        $"{device.Name}［{device.Number + 1}］" + (IsBluetoothHandsFree(device.Id) ? "（Bluetooth ハンズフリー: 開始に時間がかかることがあります）" : "");
+
+    /// <summary>
+    /// Bluetooth の HFP(ハンズフリー)マイク。開いたときに通話用の音声接続(SCO)がまだなければ作るため、最初の音声が届くまで時間がかかることがある。
+    /// Windows の HFP ドライバーは interface path が bthhfenum で始まる。
+    /// </summary>
+    public static bool IsBluetoothHandsFree(string? id) =>
+        id != null && id.Contains(@"\bthhfenum#", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// 「Windows の既定のマイク」の項目名。保存値は null(WAVE_MAPPER)のままで、これは表示だけ。
@@ -29,6 +37,23 @@ public static class MicrophoneSelection
         if (matches.Length != 1)
             throw new InvalidOperationException("マイクを一意に識別できません。設定で別のマイクを選んでください。");
         return matches[0].Number;
+    }
+}
+
+/// <summary>録音開始から最初の音声が届くまでの時間(マイクの起動待ち)が長いときの説明。UI スレッドだけが使う。</summary>
+public sealed class MicrophoneStartupNotice
+{
+    public static readonly TimeSpan SlowThreshold = TimeSpan.FromMilliseconds(500);
+
+    bool _shown;
+
+    /// <summary>しきい値以上で、まだ説明を出していなければ説明を返す。説明はこのインスタンス(アプリの起動)ごとに 1 回だけ。</summary>
+    public string? Take(TimeSpan startup)
+    {
+        if (_shown || startup < SlowThreshold) return null;
+        _shown = true;
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"マイクの起動に {startup.TotalSeconds:F1} 秒かかりました。Bluetooth ヘッドセットのハンズフリーマイクなどは、録音の開始時に音声接続の準備で時間がかかることがあります。開始音が鳴ってから話してください。");
     }
 }
 

@@ -146,4 +146,39 @@ public class MicrophoneTests
         Assert.Contains("取得できません", MicrophoneSelection.DescribeDefault(null, devices));
         Assert.Contains("取得できません", MicrophoneSelection.DescribeDefault(5, devices)); // 一覧にない番号は名前を推測しない
     }
+
+    const string HandsFreeId = @"\\?\bthhfenum#bthhfpaudio#0&0&1#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\wave";
+
+    [Theory]
+    [InlineData(HandsFreeId, true)]
+    [InlineData(@"\\?\BTHHFENUM#BthHFPAudio#x\wave", true)]
+    [InlineData(@"\\?\usb#vid_0000&pid_0000&mi_00#0&0&0&0000#{6994ad04-93ef-11d0-a3cc-00a0c9223196}\global", false)]
+    [InlineData(null, false)]
+    public void HandsFreeMicrophoneIsDetectedByInterfacePath(string? id, bool expected)
+        => Assert.Equal(expected, MicrophoneSelection.IsBluetoothHandsFree(id));
+
+    [Fact]
+    public void HandsFreeMicrophoneIsMarkedInListAndDefaultLabel()
+    {
+        var devices = new[] { new MicrophoneDevice(0, HandsFreeId, "Headset (Hands-Free)") };
+        Assert.Equal("Headset (Hands-Free)［1］（Bluetooth ハンズフリー: 開始に時間がかかることがあります）", MicrophoneSelection.Display(devices[0]));
+        Assert.Contains("Bluetooth ハンズフリー", MicrophoneSelection.DescribeDefault(0, devices));
+    }
+
+    [Fact]
+    public void SlowStartupIsDescribedOnlyAtOrAboveThreshold()
+    {
+        Assert.Null(new MicrophoneStartupNotice().Take(TimeSpan.FromMilliseconds(499)));
+        Assert.NotNull(new MicrophoneStartupNotice().Take(MicrophoneStartupNotice.SlowThreshold));
+        Assert.StartsWith("マイクの起動に 1.2 秒かかりました。", new MicrophoneStartupNotice().Take(TimeSpan.FromMilliseconds(1197)));
+    }
+
+    [Fact]
+    public void SlowStartupIsDescribedOnlyOnceEvenAfterFastStartups()
+    {
+        var notice = new MicrophoneStartupNotice();
+        Assert.Null(notice.Take(TimeSpan.FromMilliseconds(100))); // 速い起動は 1 回分に数えない
+        Assert.NotNull(notice.Take(TimeSpan.FromSeconds(1)));
+        Assert.Null(notice.Take(TimeSpan.FromSeconds(2)));
+    }
 }
