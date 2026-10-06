@@ -13,8 +13,9 @@ internal sealed class TrayIcon : IDisposable
     readonly Dictionary<SessionState, Icon> _icons = new();
     readonly ToolStripMenuItem _stateItem = new() { Enabled = false };
     readonly ToolStripMenuItem _toggleItem = new("録音の開始 / 停止");
+    readonly ToolStripMenuItem _updateItem = new() { Visible = false };
 
-    public TrayIcon(Action openSettings, Action openHistory, Action toggle, Action exit)
+    public TrayIcon(Action openSettings, Action openHistory, Action toggle, Action restartToUpdate, Action exit)
     {
         _icons[SessionState.Idle] = Draw(Color.FromArgb(0x54, 0x6E, 0x7A));
         _icons[SessionState.Recording] = Draw(Color.FromArgb(0xE5, 0x39, 0x35));
@@ -29,6 +30,8 @@ internal sealed class TrayIcon : IDisposable
         menu.Items.Add("設定を開く", null, (_, _) => openSettings());
         menu.Items.Add("履歴を開く", null, (_, _) => openHistory());
         menu.Items.Add(new ToolStripSeparator());
+        _updateItem.Click += (_, _) => restartToUpdate();
+        menu.Items.Add(_updateItem);
         menu.Items.Add("Any Dictation を終了", null, (_, _) => exit());
 
         _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true };
@@ -51,6 +54,12 @@ internal sealed class TrayIcon : IDisposable
     }
 
     public void Balloon(string title, string text) => _icon.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+
+    public void ShowUpdateReady(string version)
+    {
+        _updateItem.Text = $"再起動して更新（{version}）";
+        _updateItem.Visible = true;
+    }
 
     static Icon Draw(Color fill)
     {

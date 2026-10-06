@@ -102,6 +102,8 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
             Assert.Contains("まだ Live", run.Element("LastLiveCostText").Name);
             Assert.False(run.Element("StartupBox").IsEnabled);
             Assert.Contains(run.DataDir, run.Element("PathText").Name);
+            Assert.Contains("E2E テストでは更新を確認しません", run.Element("UpdateText").Name);
+            Assert.False(run.Exists("UpdateButton"));
             run.SelectName("使い方");
             run.SelectName("マイク");
             Assert.False(run.Element("MicrophoneStartButton").IsEnabled);
@@ -125,7 +127,7 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
                 ("プロファイル", ["NameBox", "ProviderBox", "EndpointBox", "ModelBox", "LanguageBox", "LiveRateBox", "KeyBox", "UseButton"]),
                 ("マイク", ["MicrophoneBox", "MicrophoneStopButton"]),
                 ("履歴", ["HistoryList"]),
-                ("一般", ["StartupBox", "PathText"]),
+                ("一般", ["StartupBox", "PathText", "UpdateText"]),
                 ("使い方", []),
             };
             foreach (var size in new[] { "default", "min" })

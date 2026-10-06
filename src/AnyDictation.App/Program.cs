@@ -4,6 +4,7 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using Velopack;
 
 namespace AnyDictation.App;
 
@@ -15,6 +16,13 @@ internal static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // インストール版の install/uninstall などの hook はここで処理して終了する。portable 版では何もしない
+        bool restarted = false;
+        VelopackApp.Build()
+            .SetAutoApplyOnStartup(false)
+            .OnBeforeUninstallFastCallback(_ => StartupRegistration.RemoveIfOwned())
+            .OnRestarted(_ => restarted = true)
+            .Run();
         if (!E2eMode.Configure(args)) { Environment.ExitCode = 2; return; }
         using var mutex = new Mutex(true, E2eMode.Enabled ? MutexName + ".E2E." + E2eMode.InstanceId : MutexName, out bool first);
         if (!first)
@@ -31,6 +39,7 @@ internal static class Program
             }
             return;
         }
+        if (!E2eMode.Enabled && AppUpdater.ApplyPendingOnStartup(restarted)) return;
         new AnyApp().Run();
     }
 }
@@ -44,6 +53,8 @@ internal sealed class AnyApp : Application
     DictationController _controller = null!;
     KeyboardHook _hook = null!;
     TrayIcon _tray = null!;
+    AppUpdater? _updater;
+    readonly string _versionText = $"バージョン {typeof(Program).Assembly.GetName().Version?.ToString(3)}。";
     EventWaitHandle _showEvent = null!;
     RegisteredWaitHandle? _showWait;
     bool _exiting;
@@ -71,6 +82,7 @@ internal sealed class AnyApp : Application
         _settingsWindow = new SettingsWindow(_settings, creds, _historyStore, history, _controller);
         if (E2eMode.Enabled)
         {
+            _settingsWindow.ShowUpdateState(_versionText + "E2E テストでは更新を確認しません。", canApply: false);
             _settingsWindow.AllowClose = true;
             _settingsWindow.Closed += (_, _) => { _controller.Shutdown(); _status.Close(); Shutdown(); };
             _settingsWindow.Open(SettingsTab.Profile);
@@ -80,7 +92,16 @@ internal sealed class AnyApp : Application
             openSettings: () => _settingsWindow.Open(SettingsTab.Profile),
             openHistory: () => _settingsWindow.Open(SettingsTab.History),
             toggle: () => RequestToggle("tray"),
-            exit: RequestExit);
+            restartToUpdate: RestartToUpdate,
+            exit: () => RequestExit(restart: false));
+
+        _updater = new AppUpdater();
+        _settingsWindow.ShowUpdateState(_versionText + (_updater.IsInstalled
+            ? "起動時と 24 時間ごとに更新を確認し、新しい版を自動でダウンロードします。"
+            : "インストール版ではないため、自動更新しません。"), canApply: false);
+        _updater.PendingChanged += OnUpdateReady;
+        _settingsWindow.UpdateRequested += RestartToUpdate;
+        _updater.Start();
 
         _controller.StateChanged += _tray.SetState;
         _controller.Notice += _tray.Balloon;
@@ -134,8 +155,28 @@ internal sealed class AnyApp : Application
             AutoHide: TimeSpan.FromSeconds(10)));
     }
 
-    /// <summary>本当の終了。録音と通信を止め、メモリ上の音声を消して、フックとトレイを解放する。</summary>
-    void RequestExit()
+    void OnUpdateReady()
+    {
+        string version = _updater!.Pending!.Version.ToString();
+        _tray.ShowUpdateReady(version);
+        _settingsWindow.ShowUpdateState(_versionText + $"{version} の準備ができました。終了時に更新します。", canApply: true);
+        _tray.Balloon("更新の準備ができました",
+            $"{version} に更新できます。トレイのメニューか設定画面の「一般」で「再起動して更新」を選ぶか、終了したときに更新します。");
+    }
+
+    /// <summary>録音、認識、再送待ちの間は更新しない。その音声を失わないため。</summary>
+    void RestartToUpdate()
+    {
+        if (_controller.State != SessionState.Idle)
+        {
+            _tray.Balloon("今は更新できません", "録音中、認識中、再送待ちの間は更新できません。終わってから、もう一度選んでください。");
+            return;
+        }
+        RequestExit(restart: true);
+    }
+
+    /// <summary>本当の終了。録音と通信を止め、メモリ上の音声を消して、フックとトレイを解放する。ダウンロード済みの更新があれば適用する。</summary>
+    void RequestExit(bool restart)
     {
         if (_exiting) return;
         if (_controller.HasUnsentAudio &&
@@ -153,6 +194,7 @@ internal sealed class AnyApp : Application
         _status.Close();
         _settingsWindow.AllowClose = true;
         _settingsWindow.Close();
+        _updater?.ApplyOnExit(restart);
         Shutdown();
     }
 }

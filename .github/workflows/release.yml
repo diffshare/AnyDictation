@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      VPK_VERSION: 1.2.161 # src/AnyDictation.App の Velopack パッケージと同じ版にする
+      REPO_URL: https://github.com/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Version
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "タグは vX.Y.Z の形にする: $env:GITHUB_REF_NAME" }
+          "VERSION=$version" >> $env:GITHUB_ENV
+      - name: Unit tests
+        run: dotnet test tests/AnyDictation.Tests -c Release
+      - name: Publish
+        run: dotnet publish src/AnyDictation.App -c Release -r win-x64 --self-contained true -p:Version=$env:VERSION -o publish
+      - name: Install vpk
+        run: dotnet tool install -g vpk --version $env:VPK_VERSION
+      - name: Download previous release
+        run: vpk download github --repoUrl $env:REPO_URL --token $env:GITHUB_TOKEN -o Releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pack
+        run: vpk pack --packId diffshare.AnyDictation --packVersion $env:VERSION --packDir publish --mainExe AnyDictation.exe --packTitle "Any Dictation" --packAuthors diffshare -o Releases
+      # vpk は自動更新する Portable.zip も必ず作る。配布はインストーラーだけにするため、upload の対象一覧から外す
+      - name: Exclude portable
+        run: |
+          $file = 'Releases/assets.win.json'
+          $assets = @(Get-Content $file -Raw | ConvertFrom-Json)
+          $assets | Where-Object Type -eq 'Portable' | ForEach-Object { Remove-Item (Join-Path Releases $_.RelativeFileName) }
+          ConvertTo-Json -InputObject @($assets | Where-Object Type -ne 'Portable') -Compress | Set-Content $file -NoNewline
+      - name: Upload
+        run: vpk upload github --repoUrl $env:REPO_URL --token $env:GITHUB_TOKEN -o Releases --publish --tag $env:GITHUB_REF_NAME --releaseName "Any Dictation $env:VERSION"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

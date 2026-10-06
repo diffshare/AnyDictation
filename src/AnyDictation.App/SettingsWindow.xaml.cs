@@ -36,6 +36,7 @@ internal partial class SettingsWindow : Window
     bool _dirty;
 
     public bool AllowClose { get; set; }
+    public event Action? UpdateRequested;
 
     public SettingsWindow(JsonFileStore<AppSettings> settings, ICredentialStore creds,
         JsonFileStore<HistoryData> historyStore, HistoryLog history, DictationController controller)
@@ -561,6 +562,14 @@ internal partial class SettingsWindow : Window
             StartupResultText.Text = "自動起動の設定を変更できませんでした: " + ex.Message;
         }
     }
+
+    public void ShowUpdateState(string text, bool canApply)
+    {
+        UpdateText.Text = text;
+        UpdateButton.Visibility = canApply ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    void OnUpdateClicked(object s, RoutedEventArgs e) => UpdateRequested?.Invoke();
 
     void OnOpenDataFolder(object s, RoutedEventArgs e)
     {
