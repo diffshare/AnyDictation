@@ -611,7 +611,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         Log.Write($"recording cancelled live={wasLive}");
         Notify(StatusKind.Idle, "録音を取り消しました",
             wasLive ? "接続を閉じ、保持していた音声は破棄しました。取消の前に Live へ送信済みの音声は取り消せません。" : "音声は送信せず破棄しました。",
-            TimeSpan.FromSeconds(wasLive ? 6 : 3));
+            TimeSpan.FromSeconds(wasLive ? 6 : 3), escDismissible: true);
     }
 
     void OnTick()
@@ -665,6 +665,6 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     void RaiseState() => StateChanged?.Invoke(_state.State);
 
     void Notify(StatusKind kind, string title, string detail, TimeSpan? autoHide = null,
-        bool canCancel = false, bool canAbort = false, bool canRetry = false, bool canClose = false, string? live = null)
-        => _status.Present(new StatusView(kind, title, detail, canCancel, canAbort, canRetry, canClose, autoHide, live ?? "", LiveCostText));
+        bool canCancel = false, bool canAbort = false, bool canRetry = false, bool canClose = false, string? live = null, bool escDismissible = false)
+        => _status.Present(new StatusView(kind, title, detail, canCancel, canAbort, canRetry, canClose, autoHide, live ?? "", LiveCostText, escDismissible));
 }

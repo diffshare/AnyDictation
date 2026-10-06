@@ -18,7 +18,8 @@ internal sealed record StatusView(
     bool CanClose = false,
     TimeSpan? AutoHide = null,
     string LiveText = "",
-    string CostText = "");
+    string CostText = "",
+    bool EscDismissible = false); // 表示中は録音中でなくても Esc で閉じられる(取消の通知)
 
 /// <summary>
 /// 小さな常時前面の状態表示。WS_EX_NOACTIVATE により、表示してもクリックしても前面ウィンドウ(入力フォーカス)を奪わない。
@@ -26,12 +27,18 @@ internal sealed record StatusView(
 internal partial class StatusWindow : Window
 {
     readonly DispatcherTimer _hideTimer = new();
+    bool _escDismissible; // 今の表示内容が Esc で閉じられるか
+    bool _escActive; // 通知した最後の「表示中かつ Esc で閉じられる」
 
     public event Action? CancelClicked, AbortClicked, RetryClicked, DiscardClicked;
+
+    /// <summary>「表示中で、Esc で閉じられる内容」かどうかが変わるたびに UI スレッドで呼ばれる。表示の変更、自動で隠れる、閉じるのどれでも、ウィンドウの表示状態から導く。</summary>
+    public event Action<bool>? EscDismissibleChanged;
 
     public StatusWindow()
     {
         InitializeComponent();
+        IsVisibleChanged += (_, _) => RefreshEscDismissible();
         _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); Hide(); };
         SourceInitialized += (_, _) =>
         {
@@ -44,6 +51,7 @@ internal partial class StatusWindow : Window
     public void Present(StatusView v)
     {
         _hideTimer.Stop();
+        _escDismissible = v.EscDismissible;
         Dot.Fill = new SolidColorBrush(v.Kind switch
         {
             StatusKind.Recording => Color.FromRgb(0xE5, 0x39, 0x35),
@@ -75,6 +83,23 @@ internal partial class StatusWindow : Window
             _hideTimer.Interval = t;
             _hideTimer.Start();
         }
+        RefreshEscDismissible();
+    }
+
+    void RefreshEscDismissible()
+    {
+        bool now = IsVisible && _escDismissible;
+        if (now == _escActive) return;
+        _escActive = now;
+        EscDismissibleChanged?.Invoke(now);
+    }
+
+    /// <summary>Esc で閉じられる内容が今も表示中なら閉じる。フックの判断は古いことがあるので、UI スレッドで確かめ直す。</summary>
+    public void DismissIfEscDismissible()
+    {
+        if (!_escActive) return;
+        _hideTimer.Stop();
+        Hide();
     }
 
     public void UpdateInputLevel(int? peak)
