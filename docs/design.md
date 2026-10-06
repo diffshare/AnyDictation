@@ -72,6 +72,7 @@ Native と WPF に依存する判断は、できるだけ Core の純粋なロ�
 - Velopack の起動時の自動適用は切る。二重起動（設定画面を出すための起動を含む）のたびに動き、起動中のインスタンスを止めてしまうため。代わりに単一インスタンスの Mutex を取った後、ダウンロード済みの更新があれば適用して再起動する。サインアウトなどで終了時に適用できなかった更新もここで適用する。更新直後の再起動では、適用に失敗したときの再起動の繰り返しを避けるため行わない。
 - portable 版（Velopack でインストールしていない exe）と E2E では、更新の確認をしない。
 - リリースは `vX.Y.Z` のタグの push で `.github/workflows/release.yml` が作る。vpk が必ず作る Portable.zip は自動更新する portable になり、自動更新しない portable 版と紛らわしいため、Releases には載せない。
+- delta パッケージは作らない（`vpk pack --delta None`）。前のリリースの取得が不要で手順が単純になり、Releases には Setup.exe と full nupkg だけが載る。
 
 ## キーボードフック
 

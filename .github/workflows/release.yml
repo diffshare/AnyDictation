@@ -31,12 +31,8 @@ jobs:
         run: dotnet publish src/AnyDictation.App -c Release -r win-x64 --self-contained true -p:Version=$env:VERSION -o publish
       - name: Install vpk
         run: dotnet tool install -g vpk --version $env:VPK_VERSION
-      - name: Download previous release
-        run: vpk download github --repoUrl $env:REPO_URL --token $env:GITHUB_TOKEN -o Releases
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Pack
-        run: vpk pack --packId diffshare.AnyDictation --packVersion $env:VERSION --packDir publish --mainExe AnyDictation.exe --packTitle "Any Dictation" --packAuthors diffshare -o Releases
+        run: vpk pack --delta None --packId diffshare.AnyDictation --packVersion $env:VERSION --packDir publish --mainExe AnyDictation.exe --packTitle "Any Dictation" --packAuthors diffshare -o Releases
       # vpk は自動更新する Portable.zip も必ず作る。配布はインストーラーだけにするため、upload の対象一覧から外す
       - name: Exclude portable
         run: |
