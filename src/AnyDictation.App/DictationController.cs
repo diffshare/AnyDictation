@@ -203,11 +203,20 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         if (result.Silent)
         {
             bool wasLive = _live != null;
+            // Live の接続失敗で録音を止めた場合は、マイクの準備前で無音になりやすい。無音より通信の失敗を伝える
+            var liveError = _live?.Result.Exception?.InnerException as TranscriptionException;
             DropLive();
             tracker.Dispose();
             _state.AbortRecognition();
             Array.Clear(result.Wav);
             RaiseState();
+            if (liveError != null)
+            {
+                Notify(StatusKind.Failed, "Live 通信が失敗しました",
+                    liveError.Message + "\n音声が検出されていなかったため破棄しました。",
+                    TimeSpan.FromSeconds(10), canClose: true);
+                return;
+            }
             Notify(StatusKind.Warning, "音声が検出されませんでした",
                 "マイクが無音でした。ミュートや入力デバイス、Windows のマイク権限を確認してください。" +
                 (wasLive ? "Live は録音中に音声を送信するため、送信済みの無音データは取り消せません。接続は閉じました。" : "音声は送信していません。") +
