@@ -5,7 +5,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>AnyDictation.App</RootNamespace>
     <AssemblyName>AnyDictation</AssemblyName>
     <Product>Any Dictation</Product>
@@ -16,6 +15,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AnyDictation.E2E" />
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <PackageReference Include="Velopack" Version="1.2.161" />
     <ProjectReference Include="..\AnyDictation.Core\AnyDictation.Core.csproj" />
     <PackageReference Include="NAudio.WinMM" Version="3.1.0" />
