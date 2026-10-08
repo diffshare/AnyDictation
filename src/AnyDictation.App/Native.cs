@@ -12,12 +12,13 @@ namespace AnyDictation.App;
 internal static class Native
 {
     public const ushort VK_CONTROL = 0x11, VK_V = 0x56, VK_RETURN = 0x0D, VK_MASK = 0xE8;
+    const int WS_EX_NOACTIVATE = 0x08000000, WS_EX_TOOLWINDOW = 0x00000080;
     public const ushort VK_LWIN = 0x5B, VK_RWIN = 0x5C;
 
     /// <summary>自身が SendInput したイベントを識別する dwExtraInfo。フックはこの値を持つイベントを無視する。</summary>
     public static readonly UIntPtr OwnMarker = new(0x414E5944); // "ANYD"
 
-    public static IntPtr GetForegroundWindow() => PInvoke.GetForegroundWindow().Value;
+    public static unsafe IntPtr GetForegroundWindow() => (IntPtr)PInvoke.GetForegroundWindow().Value;
 
     /// <summary>ウィンドウを非アクティブのツールウィンドウにする(フォーカスを奪わず、Alt+Tab に出さない)。</summary>
     public static void MakeNoActivateToolWindow(IntPtr hwnd)
@@ -25,7 +26,7 @@ internal static class Native
         var window = new HWND(hwnd);
         int style = PInvoke.GetWindowLong(window, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
         PInvoke.SetWindowLong(window, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE,
-            style | (int)(WINDOW_EX_STYLE.WS_EX_NOACTIVATE | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW));
+            style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
     }
 
     public static void DestroyIcon(IntPtr handle) => PInvoke.DestroyIcon(new HICON(handle));

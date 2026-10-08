@@ -237,9 +237,9 @@ internal sealed class ForegroundTracker : IDisposable
         if (_hook.IsNull) Log.Write("foreground tracker hook failed");
     }
 
-    void OnForeground(HWINEVENTHOOK hook, uint evt, HWND hwnd, int idObject, int idChild, uint thread, uint time)
+    unsafe void OnForeground(HWINEVENTHOOK hook, uint evt, HWND hwnd, int idObject, int idChild, uint thread, uint time)
     {
-        if (!hwnd.IsNull && hwnd.Value != _target) ChangedAwayFromTarget = true;
+        if (!hwnd.IsNull && (IntPtr)hwnd.Value != _target) ChangedAwayFromTarget = true;
     }
 
     public void Dispose()
