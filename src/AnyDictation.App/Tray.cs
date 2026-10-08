@@ -2,18 +2,18 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Windows.Forms;
+using System.Windows.Controls;
+using H.NotifyIcon;
 
 namespace AnyDictation.App;
 
 /// <summary>タスクトレイのアイコンとメニュー。アイコンは状態ごとに色を変える。</summary>
 internal sealed class TrayIcon : IDisposable
 {
-    readonly NotifyIcon _icon;
+    readonly TaskbarIcon _icon;
     readonly Dictionary<SessionState, Icon> _icons = new();
-    readonly ToolStripMenuItem _stateItem = new() { Enabled = false };
-    readonly ToolStripMenuItem _toggleItem = new("録音の開始 / 停止");
-    readonly ToolStripMenuItem _updateItem = new() { Visible = false };
+    readonly MenuItem _stateItem = new() { IsEnabled = false };
+    readonly MenuItem _updateItem = new() { Visibility = System.Windows.Visibility.Collapsed };
 
     public TrayIcon(Action openSettings, Action openHistory, Action toggle, Action restartToUpdate, Action exit)
     {
@@ -22,20 +22,20 @@ internal sealed class TrayIcon : IDisposable
         _icons[SessionState.Recognizing] = Draw(Color.FromArgb(0xFB, 0x8C, 0x00));
         _icons[SessionState.RetryPending] = Draw(Color.FromArgb(0x8E, 0x0F, 0x0F));
 
-        var menu = new ContextMenuStrip();
+        var menu = new ContextMenu();
         menu.Items.Add(_stateItem);
-        menu.Items.Add(new ToolStripSeparator());
-        _toggleItem.Click += (_, _) => toggle();
-        menu.Items.Add(_toggleItem);
-        menu.Items.Add("設定を開く", null, (_, _) => openSettings());
-        menu.Items.Add("履歴を開く", null, (_, _) => openHistory());
-        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("録音の開始 / 停止", toggle));
+        menu.Items.Add(Item("設定を開く", openSettings));
+        menu.Items.Add(Item("履歴を開く", openHistory));
+        menu.Items.Add(new Separator());
         _updateItem.Click += (_, _) => restartToUpdate();
         menu.Items.Add(_updateItem);
-        menu.Items.Add("Any Dictation を終了", null, (_, _) => exit());
+        menu.Items.Add(Item("Any Dictation を終了", exit));
 
-        _icon = new NotifyIcon { ContextMenuStrip = menu, Visible = true };
-        _icon.DoubleClick += (_, _) => openSettings();
+        _icon = new TaskbarIcon { ContextMenu = menu };
+        _icon.TrayMouseDoubleClick += (_, _) => openSettings();
+        _icon.ForceCreate();
         SetState(SessionState.Idle);
     }
 
@@ -49,16 +49,23 @@ internal sealed class TrayIcon : IDisposable
             SessionState.RetryPending => "失敗(再送待ち)",
             _ => "待機中(Ctrl+Win で録音)",
         };
-        _stateItem.Text = "状態: " + text;
-        _icon.Text = "Any Dictation - " + text;
+        _stateItem.Header = "状態: " + text;
+        _icon.ToolTipText = "Any Dictation - " + text;
     }
 
-    public void Balloon(string title, string text) => _icon.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+    public void Balloon(string title, string text) => _icon.ShowNotification(title, text, NotificationIcon.Info);
 
     public void ShowUpdateReady(string version)
     {
-        _updateItem.Text = $"再起動して更新（{version}）";
-        _updateItem.Visible = true;
+        _updateItem.Header = $"再起動して更新（{version}）";
+        _updateItem.Visibility = System.Windows.Visibility.Visible;
+    }
+
+    static MenuItem Item(string header, Action click)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => click();
+        return item;
     }
 
     static Icon Draw(Color fill)
@@ -92,7 +99,6 @@ internal sealed class TrayIcon : IDisposable
 
     public void Dispose()
     {
-        _icon.Visible = false;
         _icon.Dispose();
         foreach (var i in _icons.Values) i.Dispose();
     }
