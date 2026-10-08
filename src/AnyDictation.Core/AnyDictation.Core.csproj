@@ -5,9 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AnyDictation</RootNamespace>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416</NoWarn> <!-- CsWin32 の API は Windows 限定。呼び出しは WindowsCredentialStore に閉じる -->
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.269" PrivateAssets="all" />
   </ItemGroup>
 </Project>

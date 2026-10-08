@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using NAudio.Wave;
+using Windows.Win32;
+using Windows.Win32.Media.Audio;
 
 namespace AnyDictation.App;
 
@@ -10,8 +12,8 @@ internal static class Microphones
     // Mmddk.h: DRV_RESERVED + 12 / + 13. 番号は保存せず、デバイス interface path を保存する。
     const uint QueryInterfaceSize = 0x080D;
     const uint QueryInterface = 0x080C;
-    [DllImport("winmm.dll", EntryPoint = "waveInMessage")]
-    static extern uint Message(IntPtr device, uint message, IntPtr parameter1, UIntPtr parameter2);
+    static uint Message(IntPtr device, uint message, IntPtr parameter1, UIntPtr parameter2) =>
+        PInvoke.waveInMessage(new HWAVEIN(device), message, (nuint)parameter1, parameter2);
 
     public static IReadOnlyList<MicrophoneDevice> List()
     {
@@ -47,13 +49,11 @@ internal static class Microphones
     // Mmddk.h: DRVM_MAPPER(0x2000) + 21。WAVE_MAPPER(UINT -1)を HWAVEIN として渡すと、デバイスを開かず現在の既定番号を返す。
     const uint PreferredGet = 0x2015;
     const long WaveMapper = uint.MaxValue;
-    [DllImport("winmm.dll", EntryPoint = "waveInMessage")]
-    static extern uint MessageForPreferred(IntPtr device, uint message, out uint preferred, out uint flags);
-
     /// <summary>WAVE_MAPPER が選ぶ現在の既定マイクの番号。既定なしは -1、取得できなければ null。</summary>
-    public static int? ReadDefaultNumber()
+    public static unsafe int? ReadDefaultNumber()
     {
-        if (MessageForPreferred(new IntPtr(WaveMapper), PreferredGet, out uint preferred, out _) != 0) return null;
+        uint preferred = 0, flags = 0;
+        if (PInvoke.waveInMessage(new HWAVEIN(new IntPtr(WaveMapper)), PreferredGet, (nuint)(&preferred), (nuint)(&flags)) != 0) return null;
         return unchecked((int)preferred);
     }
 

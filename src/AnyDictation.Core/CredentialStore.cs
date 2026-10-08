@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using Windows.Win32;
+using Windows.Win32.Security.Credentials;
 
 namespace AnyDictation;
 
@@ -18,89 +20,67 @@ public static class CredentialTargets
 }
 
 /// <summary>APIキーを Windows 資格情報マネージャー(汎用資格情報)へ保存する。設定 JSON とログには書かない。</summary>
-public sealed class WindowsCredentialStore : ICredentialStore
+public sealed unsafe class WindowsCredentialStore : ICredentialStore
 {
-    const int CredTypeGeneric = 1;
-    const int CredPersistLocalMachine = 2;
     const int ErrorNotFound = 1168;
 
     public string? Read(string target)
     {
-        if (!CredRead(target, CredTypeGeneric, 0, out var ptr))
+        CREDENTIALW* cred;
+        fixed (char* name = target)
         {
-            int err = Marshal.GetLastWin32Error();
-            if (err == ErrorNotFound) return null;
-            throw new InvalidOperationException($"資格情報マネージャーから読み取れません(Win32 エラー {err})。");
+            if (!PInvoke.CredRead(name, CRED_TYPE.CRED_TYPE_GENERIC, 0, &cred))
+            {
+                int err = Marshal.GetLastWin32Error();
+                if (err == ErrorNotFound) return null;
+                throw new InvalidOperationException($"資格情報マネージャーから読み取れません(Win32 エラー {err})。");
+            }
         }
         try
         {
-            var cred = Marshal.PtrToStructure<CREDENTIAL>(ptr);
-            if (cred.CredentialBlobSize == 0 || cred.CredentialBlob == IntPtr.Zero) return "";
-            return Marshal.PtrToStringUni(cred.CredentialBlob, (int)cred.CredentialBlobSize / 2);
+            if (cred->CredentialBlobSize == 0 || cred->CredentialBlob == null) return "";
+            return new string((char*)cred->CredentialBlob, 0, (int)cred->CredentialBlobSize / 2);
         }
         finally
         {
-            CredFree(ptr);
+            PInvoke.CredFree(cred);
         }
     }
 
     public void Write(string target, string secret)
     {
         var blob = Encoding.Unicode.GetBytes(secret);
-        var handle = GCHandle.Alloc(blob, GCHandleType.Pinned);
         try
         {
-            var cred = new CREDENTIAL
+            fixed (char* name = target)
+            fixed (char* user = "AnyDictation")
+            fixed (byte* data = blob)
             {
-                Type = CredTypeGeneric,
-                TargetName = target,
-                UserName = "AnyDictation",
-                CredentialBlobSize = (uint)blob.Length,
-                CredentialBlob = handle.AddrOfPinnedObject(),
-                Persist = CredPersistLocalMachine,
-            };
-            if (!CredWrite(ref cred, 0))
-                throw new InvalidOperationException($"資格情報マネージャーへ保存できません(Win32 エラー {Marshal.GetLastWin32Error()})。");
+                var cred = new CREDENTIALW
+                {
+                    Type = CRED_TYPE.CRED_TYPE_GENERIC,
+                    TargetName = name,
+                    UserName = user,
+                    CredentialBlobSize = (uint)blob.Length,
+                    CredentialBlob = data,
+                    Persist = CRED_PERSIST.CRED_PERSIST_LOCAL_MACHINE,
+                };
+                if (!PInvoke.CredWrite(&cred, 0))
+                    throw new InvalidOperationException($"資格情報マネージャーへ保存できません(Win32 エラー {Marshal.GetLastWin32Error()})。");
+            }
         }
         finally
         {
             Array.Clear(blob);
-            handle.Free();
         }
     }
 
     public void Delete(string target)
     {
-        if (!CredDelete(target, CredTypeGeneric, 0) && Marshal.GetLastWin32Error() != ErrorNotFound)
-            throw new InvalidOperationException($"資格情報を削除できません(Win32 エラー {Marshal.GetLastWin32Error()})。");
+        fixed (char* name = target)
+        {
+            if (!PInvoke.CredDelete(name, CRED_TYPE.CRED_TYPE_GENERIC, 0) && Marshal.GetLastWin32Error() != ErrorNotFound)
+                throw new InvalidOperationException($"資格情報を削除できません(Win32 エラー {Marshal.GetLastWin32Error()})。");
+        }
     }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    struct CREDENTIAL
-    {
-        public uint Flags;
-        public uint Type;
-        public string TargetName;
-        public string? Comment;
-        public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten;
-        public uint CredentialBlobSize;
-        public IntPtr CredentialBlob;
-        public uint Persist;
-        public uint AttributeCount;
-        public IntPtr Attributes;
-        public string? TargetAlias;
-        public string? UserName;
-    }
-
-    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern bool CredRead(string target, int type, int flags, out IntPtr credential);
-
-    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern bool CredWrite(ref CREDENTIAL credential, int flags);
-
-    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
-    static extern bool CredDelete(string target, int type, int flags);
-
-    [DllImport("advapi32.dll")]
-    static extern void CredFree(IntPtr buffer);
 }
