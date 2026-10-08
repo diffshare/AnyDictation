@@ -32,6 +32,11 @@ jobs:
         run: |
           $env:ANYDICTATION_E2E_EXE = Join-Path $PWD 'src/AnyDictation.App/bin/Release/net10.0-windows/AnyDictation.exe'
           dotnet test tests/AnyDictation.E2E -c Release --no-build --filter "FullyQualifiedName~SettingsGuiTests" --logger "console;verbosity=normal"
+      - name: Status window screenshots
+        env:
+          ANYDICTATION_RUN_E2E: '1'
+          ANYDICTATION_E2E_SHOTS: ${{ runner.temp }}/shots
+        run: dotnet test tests/AnyDictation.E2E -c Release --no-build --filter "FullyQualifiedName~StatusWindowShotTests" --logger "console;verbosity=normal"
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v7
