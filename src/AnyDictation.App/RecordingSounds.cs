@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Media;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -17,7 +18,7 @@ internal static class RecordingSounds
     {
         // 通知音の失敗で録音や認識を止めない。Play は非同期で再生する。
         try { player.Play(); }
-        catch (Exception e) { Log.Write($"recording sound failed: {e.GetType().Name}"); }
+        catch (Exception e) { Log.RecordingSoundFailed(e.GetType().Name); }
     }
 
     static SoundPlayer Create(double first, double second)

@@ -17,6 +17,7 @@
     <InternalsVisibleTo Include="AnyDictation.E2E" />
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.4.1" />
     <PackageReference Include="Velopack" Version="1.2.161" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
     <ProjectReference Include="..\AnyDictation.Core\AnyDictation.Core.csproj" />
     <PackageReference Include="NAudio.WinMM" Version="3.1.0" />
   </ItemGroup>

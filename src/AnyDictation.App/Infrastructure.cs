@@ -2,7 +2,9 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -16,27 +18,40 @@ internal static class AppPaths
     public static string LogFile => Path.Combine(DataDir, "log.txt");
 }
 
-/// <summary>診断ログ。状態遷移とエラー種別だけを書き、認識結果の本文・APIキー・音声は書かない。</summary>
-internal static class Log
+/// <summary>
+/// 診断ログの書き込み先。呼び出し側は using static で Log を取り込み、LogMessages で定義したメソッドだけで書く。
+/// 状態遷移とエラー種別だけを書き、認識結果の本文・APIキー・音声は書かない。渡された Exception も書かない。
+/// </summary>
+internal static class AppLog
 {
-    const long MaxBytes = 256 * 1024;
-    static readonly object Gate = new();
+    public static readonly ILogger Log = new FileLogger();
 
-    public static void Write(string message)
+    sealed class FileLogger : ILogger
     {
-        try
+        const long MaxBytes = 256 * 1024;
+        static readonly object Gate = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel != LogLevel.None;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
-            lock (Gate)
+            if (!IsEnabled(logLevel)) return;
+            try
             {
-                Directory.CreateDirectory(AppPaths.DataDir);
-                var fi = new FileInfo(AppPaths.LogFile);
-                if (fi.Exists && fi.Length > MaxBytes) File.Move(AppPaths.LogFile, AppPaths.LogFile + ".old", overwrite: true);
-                File.AppendAllText(AppPaths.LogFile, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
+                string message = formatter(state, null);
+                lock (Gate)
+                {
+                    Directory.CreateDirectory(AppPaths.DataDir);
+                    var fi = new FileInfo(AppPaths.LogFile);
+                    if (fi.Exists && fi.Length > MaxBytes) File.Move(AppPaths.LogFile, AppPaths.LogFile + ".old", overwrite: true);
+                    File.AppendAllText(AppPaths.LogFile, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}{Environment.NewLine}");
+                }
             }
-        }
-        catch (Exception)
-        {
-            // ログ失敗でアプリの動作は止めない
+            catch (Exception)
+            {
+                // ログ失敗でアプリの動作は止めない
+            }
         }
     }
 }
@@ -102,9 +117,5 @@ internal sealed class RecordingStartTrace
     readonly int _id = System.Threading.Interlocked.Increment(ref _nextId);
     readonly Stopwatch _clock = Stopwatch.StartNew();
 
-    public void Mark(string stage)
-    {
-        double elapsed = _clock.Elapsed.TotalMilliseconds;
-        Log.Write(FormattableString.Invariant($"recording_start id={_id} stage={stage} elapsed_ms={elapsed:F1}"));
-    }
+    public void Mark(RecordingStartStage stage) => Log.RecordingStartStageReached(_id, stage, _clock.Elapsed.TotalMilliseconds);
 }

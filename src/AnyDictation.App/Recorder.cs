@@ -33,9 +33,9 @@ internal sealed class Recorder : IDisposable
         int sampleRate = CaptureSession.DefaultSampleRate, Action<byte[]>? onAudio = null)
     {
         if (_waveIn != null) throw new InvalidOperationException("すでに録音中です。");
-        trace?.Mark("device_resolution_started");
+        trace?.Mark(RecordingStartStage.device_resolution_started);
         int deviceNumber = Microphones.Resolve(microphoneId);
-        trace?.Mark("device_resolution_completed");
+        trace?.Mark(RecordingStartStage.device_resolution_completed);
         var session = _slot.Begin(sampleRate, onAudio);
         var w = new WaveIn { DeviceNumber = deviceNumber, WaveFormat = new WaveFormat(sampleRate, 16, 1), BufferMilliseconds = 100 };
         var startup = System.Diagnostics.Stopwatch.StartNew();
@@ -47,14 +47,14 @@ internal sealed class Recorder : IDisposable
             if (e.BytesRecorded == 0 || !_slot.IsCurrent(session)) return;
             if (System.Threading.Interlocked.Exchange(ref bufferReceived, 1) == 0)
             {
-                trace?.Mark("first_audio_buffer_received");
+                trace?.Mark(RecordingStartStage.first_audio_buffer_received);
                 Ready?.Invoke(session, startup.Elapsed);
             }
             if (trace == null) return;
             if (System.Threading.Volatile.Read(ref signalLogged) == 0 &&
                 SilenceDetector.MeasurePeak(e.Buffer.AsSpan(0, e.BytesRecorded)) >= SilenceDetector.DefaultThreshold &&
                 System.Threading.Interlocked.Exchange(ref signalLogged, 1) == 0)
-                trace.Mark("first_non_silent_buffer_received");
+                trace.Mark(RecordingStartStage.first_non_silent_buffer_received);
         };
         w.RecordingStopped += (_, e) =>
         {
@@ -64,9 +64,9 @@ internal sealed class Recorder : IDisposable
         };
         try
         {
-            trace?.Mark("wavein_start_call_started");
+            trace?.Mark(RecordingStartStage.wavein_start_call_started);
             w.StartRecording();
-            trace?.Mark("wavein_start_call_returned");
+            trace?.Mark(RecordingStartStage.wavein_start_call_returned);
         }
         catch
         {

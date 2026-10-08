@@ -3,6 +3,8 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AnyDictation;
 
@@ -17,7 +19,7 @@ public delegate Task<WebSocket> LiveConnect(Uri uri, string apiKey, Cancellation
 /// 失敗(切断・タイムアウト・error・不正な応答)は Result が TranscriptionException で終わる。自動再接続も別サービスへの fallback もしない。
 /// 呼び出し側は音声を別に保持しておき、失敗したら手動で再送する(新しいセッションで全部送り直す)。
 /// Cancel はこれ以上送らず接続を捨てる。送信済みの音声は取り消せない。
-/// ログ(log)には段階名・経過時間・長さ・種別だけを渡す。音声、base64、発言、キー、ヘッダーは渡さない。
+/// ログ(logger)には LiveLog で定義した段階名・経過時間・長さ・種別だけを書く。音声、base64、発言、キー、ヘッダーは書かない。
 /// </summary>
 public sealed class LiveTranscriptionSession
 {
@@ -42,7 +44,7 @@ public sealed class LiveTranscriptionSession
     readonly string _apiKey;
     readonly Uri _uri;
     readonly LiveConnect _connect;
-    readonly Action<string>? _log;
+    readonly ILogger _logger;
     readonly TimeSpan _connectTimeout;
     readonly TimeSpan _finishTimeout;
     readonly Stopwatch _clock = Stopwatch.StartNew();
@@ -66,7 +68,7 @@ public sealed class LiveTranscriptionSession
         _profile.LiveUsdPerMinute, Volatile.Read(ref _sendInProgress) != 0);
 
     /// <summary>エンドポイントかキーが不正なら、送信前に TranscriptionException(Configuration) を投げる。</summary>
-    public LiveTranscriptionSession(Profile profile, string apiKey, LiveConnect? connect = null, Action<string>? log = null,
+    public LiveTranscriptionSession(Profile profile, string apiKey, LiveConnect? connect = null, ILogger? logger = null,
         TimeSpan? connectTimeout = null, TimeSpan? finishTimeout = null)
     {
         if (apiKey.Length == 0)
@@ -75,7 +77,7 @@ public sealed class LiveTranscriptionSession
         _profile = profile.Clone();
         _apiKey = apiKey;
         _connect = connect ?? ConnectAsync;
-        _log = log;
+        _logger = logger ?? NullLogger.Instance;
         _connectTimeout = connectTimeout ?? DefaultConnectTimeout;
         _finishTimeout = finishTimeout ?? DefaultFinishTimeout;
     }
@@ -146,7 +148,7 @@ public sealed class LiveTranscriptionSession
     public void Complete()
     {
         if (_result.Task.IsCompleted || !_audio.Writer.TryComplete()) return;
-        Trace("audio_complete");
+        Trace(LiveStage.audio_complete);
         _ = WatchFinishAsync();
     }
 
@@ -154,7 +156,7 @@ public sealed class LiveTranscriptionSession
     public void Cancel()
     {
         if (!_result.TrySetCanceled()) return;
-        Trace("cancelled");
+        Trace(LiveStage.cancelled);
         Terminate(abort: true);
     }
 
@@ -180,11 +182,11 @@ public sealed class LiveTranscriptionSession
         WebSocket? ws = null;
         try
         {
-            Trace("connect_started");
+            Trace(LiveStage.connect_started);
             ws = await ConnectWithTimeoutAsync().ConfigureAwait(false);
             _ws = ws;
             _cts.Token.ThrowIfCancellationRequested(); // 接続中に取消されていたら、何も送らず閉じる
-            Trace("connected");
+            Trace(LiveStage.connected);
             var receive = ReceiveLoopAsync(ws);
             await SendTextAsync(ws, BuildSessionUpdate()).ConfigureAwait(false);
             try
@@ -234,7 +236,7 @@ public sealed class LiveTranscriptionSession
         long sent = 0;
         await foreach (var chunk in _audio.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
         {
-            if (sent == 0) Trace("send_started");
+            if (sent == 0) Trace(LiveStage.send_started);
             Volatile.Write(ref _sendInProgress, 1);
             await SendTextAsync(ws, "{\"type\":\"input_audio_buffer.append\",\"audio\":\"" + Convert.ToBase64String(chunk) + "\"}").ConfigureAwait(false);
             Interlocked.Add(ref _sentAudioBytes, chunk.Length);
@@ -247,7 +249,7 @@ public sealed class LiveTranscriptionSession
             throw new TranscriptionException(TranscriptionErrorKind.EmptyResult, "送信できる音声がありませんでした。");
         lock (_gate) _commitSent = true; // 応答(committed)が届く前に立てる
         await SendTextAsync(ws, CommitMessage).ConfigureAwait(false);
-        Trace("commit_sent", $" audio_bytes={sent}");
+        _logger.LiveCommitSent(_id, ElapsedMs, sent);
     }
 
     async Task ReceiveLoopAsync(WebSocket ws)
@@ -265,7 +267,7 @@ public sealed class LiveTranscriptionSession
                     r = await ws.ReceiveAsync(buffer.AsMemory(), _cts.Token).ConfigureAwait(false);
                     if (r.MessageType == WebSocketMessageType.Close)
                     {
-                        Trace("closed_by_server", $" close_status={ws.CloseStatus}");
+                        _logger.LiveClosedByServer(_id, ElapsedMs, ws.CloseStatus);
                         throw new TranscriptionException(TranscriptionErrorKind.Network,
                             "サービスが接続を閉じました。結果を受け取る前に切断されています。");
                     }
@@ -293,10 +295,10 @@ public sealed class LiveTranscriptionSession
         switch (type)
         {
             case "session.created":
-                Trace("session_created");
+                Trace(LiveStage.session_created);
                 break;
             case "session.updated":
-                Trace("session_updated");
+                Trace(LiveStage.session_updated);
                 _ready.TrySetResult();
                 break;
             case "input_audio_buffer.committed":
@@ -307,7 +309,7 @@ public sealed class LiveTranscriptionSession
                     if (!_commitSent) throw Invalid("要求していない確定(committed)を受信しました");
                     _committedItemId = committedId;
                 }
-                Trace("committed");
+                Trace(LiveStage.committed);
                 ResolveFinal();
                 break;
             case DeltaType:
@@ -335,7 +337,7 @@ public sealed class LiveTranscriptionSession
             first = !_firstDeltaLogged;
             _firstDeltaLogged = true;
         }
-        if (first) Trace("first_delta");
+        if (first) Trace(LiveStage.first_delta);
         PartialChanged?.Invoke();
     }
 
@@ -356,7 +358,7 @@ public sealed class LiveTranscriptionSession
 
     TranscriptionException ServerError(string raw)
     {
-        Trace("server_error"); // サービスが返す文字列(code を含む)はログに出さない。画面向けの detail だけ下で作る
+        Trace(LiveStage.server_error); // サービスが返す文字列(code を含む)はログに出さない。画面向けの detail だけ下で作る
         string detail = TranscriptionClients.ExtractDetail(raw, _apiKey);
         return new(TranscriptionErrorKind.Other, "サービスがエラーを返しました。" + (detail.Length > 0 ? $" サービスのメッセージ: {detail}" : ""));
     }
@@ -366,14 +368,14 @@ public sealed class LiveTranscriptionSession
     void Succeed(string text)
     {
         if (!_result.TrySetResult(text)) return;
-        Trace("final", $" chars={text.Length}");
+        _logger.LiveFinal(_id, ElapsedMs, text.Length);
         Terminate(abort: false);
     }
 
     void Fail(TranscriptionException e)
     {
         if (!_result.TrySetException(e)) return;
-        Trace("failed", $" kind={e.Kind}");
+        _logger.LiveFailed(_id, ElapsedMs, e.Kind);
         Terminate(abort: true);
     }
 
@@ -464,6 +466,7 @@ public sealed class LiveTranscriptionSession
         _ => new(TranscriptionErrorKind.Other, $"想定外のエラーが発生しました({e.GetType().Name})。", e),
     };
 
-    void Trace(string stage, string extra = "")
-        => _log?.Invoke(FormattableString.Invariant($"live id={_id} stage={stage} elapsed_ms={_clock.Elapsed.TotalMilliseconds:F1}{extra}"));
+    double ElapsedMs => _clock.Elapsed.TotalMilliseconds;
+
+    void Trace(LiveStage stage) => _logger.LiveStageReached(_id, stage, ElapsedMs);
 }

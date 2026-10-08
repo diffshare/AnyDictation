@@ -1,0 +1,5 @@
+root = true
+
+[*.cs]
+# ログは LoggerMessage のソース生成(LogMessages / LiveLog)で定義したメソッドだけで書く。LogInformation などの直接呼び出しはビルドエラーにする
+dotnet_diagnostic.CA1848.severity = error
