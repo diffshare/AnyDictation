@@ -94,6 +94,50 @@ public static class SettingsCommit
     }
 }
 
+/// <summary>
+/// 設定画面の即時保存で書き込む内容。Candidate は書き込む設定、Applied は下書きの内容で保存するプロファイルの ID。
+/// APIキーの変更と削除は Applied のプロファイルにだけ適用する(不正な編集を保存しなかったプロファイルの、
+/// 保存済みのエンドポイントに新しいキーを組み合わせないため)。
+/// </summary>
+public sealed record AutoSavePlan(AppSettings Candidate, IReadOnlySet<Guid> Applied);
+
+public static class AutoSave
+{
+    /// <summary>
+    /// 編集中の下書きから、保存してよい部分だけで設定を組み立てる。
+    /// 検証を通る下書きはその内容で保存する。保存済みのプロファイルを不正な値に変えた場合は、保存済みの内容を保つ。
+    /// 追加したばかりで必要な項目がそろっていないプロファイルは、そろうまで書かない。
+    /// 使用先は、保存するプロファイルに含まれるときだけ反映する。
+    /// </summary>
+    public static AutoSavePlan Plan(AppSettings saved, IEnumerable<Profile> drafts, Guid? draftActive, string? microphoneDeviceId)
+    {
+        var savedById = saved.Profiles.ToDictionary(p => p.Id);
+        var profiles = new List<Profile>();
+        var applied = new HashSet<Guid>();
+        foreach (var d in drafts)
+        {
+            if (ProfileValidator.Validate(d).Count == 0)
+            {
+                profiles.Add(d.Clone());
+                applied.Add(d.Id);
+            }
+            else if (savedById.TryGetValue(d.Id, out var kept))
+            {
+                profiles.Add(kept.Clone());
+            }
+        }
+        var candidate = new AppSettings
+        {
+            Version = saved.Version,
+            Theme = saved.Theme,
+            MicrophoneDeviceId = microphoneDeviceId,
+            ActiveProfileId = profiles.Any(p => p.Id == draftActive) ? draftActive : null,
+            Profiles = profiles,
+        };
+        return new(candidate, applied);
+    }
+}
+
 public sealed record SendTarget(Profile Profile, string ApiKey);
 
 /// <summary>録音開始・送信の直前に、送ってよい状態かを確認して接続先とキーを解決する。</summary>

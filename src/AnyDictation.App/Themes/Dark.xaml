@@ -1,0 +1,29 @@
+<!-- 設計トークン(ダーク)。キーは Light.xaml と揃える -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Accent" Color="#76ACFC"/>
+    <SolidColorBrush x:Key="AccentText" Color="#91C0FF"/>
+    <SolidColorBrush x:Key="OnAccent" Color="#0D1424"/>
+    <SolidColorBrush x:Key="AccentButtonBackground" Color="#76ACFC"/>
+    <SolidColorBrush x:Key="AccentButtonForeground" Color="#0D1424"/>
+    <SolidColorBrush x:Key="BadgeBg" Color="#20385C"/>
+    <SolidColorBrush x:Key="BadgeFg" Color="#B1D3FF"/>
+    <SolidColorBrush x:Key="WindowBg" Color="#202125"/>
+    <SolidColorBrush x:Key="CardBg" Color="#2A2B30"/>
+    <SolidColorBrush x:Key="InputBg" Color="#35363B"/>
+    <SolidColorBrush x:Key="SecondaryButtonBg" Color="#35363B"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#ECECEE"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#A3A6AD"/>
+    <SolidColorBrush x:Key="TextBody" Color="#C9CBD0"/>
+    <SolidColorBrush x:Key="Stroke" Color="#0FFFFFFF"/>
+    <SolidColorBrush x:Key="StrokeStrong" Color="#1AFFFFFF"/>
+    <SolidColorBrush x:Key="Divider" Color="#0DFFFFFF"/>
+    <SolidColorBrush x:Key="NavSelectedBg" Color="#12FFFFFF"/>
+    <SolidColorBrush x:Key="NavHoverBg" Color="#0AFFFFFF"/>
+    <SolidColorBrush x:Key="ErrorBannerBg" Color="#4A2426"/>
+    <SolidColorBrush x:Key="ErrorText" Color="#FFB4AB"/>
+    <SolidColorBrush x:Key="WarningText" Color="#FFB86B"/>
+    <SolidColorBrush x:Key="SuccessText" Color="#7FD39A"/>
+    <Color x:Key="ShadowColor">#000000</Color>
+    <sys:Double x:Key="ShadowOpacity" xmlns:sys="clr-namespace:System;assembly=System.Runtime">0.5</sys:Double>
+</ResourceDictionary>

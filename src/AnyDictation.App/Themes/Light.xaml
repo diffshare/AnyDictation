@@ -1,0 +1,30 @@
+<!-- 設計トークン(ライト)。AppTheme がテーマに合わせて Dark.xaml と差し替える。キーは両方で揃える -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Accent" Color="#2D6FCD"/>
+    <SolidColorBrush x:Key="AccentText" Color="#1D60BC"/>
+    <SolidColorBrush x:Key="OnAccent" Color="#FFFFFF"/>
+    <!-- WPF UI のプライマリボタン。AccentButtonBackground は初回参照の色に固定され、テーマを切り替えても変わらないため、ここで差し替える -->
+    <SolidColorBrush x:Key="AccentButtonBackground" Color="#2D6FCD"/>
+    <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="BadgeBg" Color="#DBEDFF"/>
+    <SolidColorBrush x:Key="BadgeFg" Color="#0850AB"/>
+    <SolidColorBrush x:Key="WindowBg" Color="#ECEEF1"/>
+    <SolidColorBrush x:Key="CardBg" Color="#FBFBFC"/>
+    <SolidColorBrush x:Key="InputBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="SecondaryButtonBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#1B1B1F"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#5C5F66"/>
+    <SolidColorBrush x:Key="TextBody" Color="#3C3F45"/>
+    <SolidColorBrush x:Key="Stroke" Color="#0F000000"/>
+    <SolidColorBrush x:Key="StrokeStrong" Color="#1A000000"/>
+    <SolidColorBrush x:Key="Divider" Color="#0D000000"/>
+    <SolidColorBrush x:Key="NavSelectedBg" Color="#0E000000"/>
+    <SolidColorBrush x:Key="NavHoverBg" Color="#08000000"/>
+    <SolidColorBrush x:Key="ErrorBannerBg" Color="#FDECEA"/>
+    <SolidColorBrush x:Key="ErrorText" Color="#B71C1C"/>
+    <SolidColorBrush x:Key="WarningText" Color="#A85C00"/>
+    <SolidColorBrush x:Key="SuccessText" Color="#2B7A43"/>
+    <Color x:Key="ShadowColor">#141E3C</Color>
+    <sys:Double x:Key="ShadowOpacity" xmlns:sys="clr-namespace:System;assembly=System.Runtime">0.16</sys:Double>
+</ResourceDictionary>

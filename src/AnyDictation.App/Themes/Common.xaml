@@ -1,0 +1,10 @@
+<!-- テーマに依らない設計トークン -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Recording" Color="#E23439"/>
+    <SolidColorBrush x:Key="Warning" Color="#D77600"/>
+    <SolidColorBrush x:Key="Caution" Color="#B8A000"/>
+    <SolidColorBrush x:Key="Success" Color="#399D57"/>
+    <FontFamily x:Key="UiFont">Segoe UI Variable Text, Yu Gothic UI</FontFamily>
+    <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas, Yu Gothic UI</FontFamily>
+</ResourceDictionary>

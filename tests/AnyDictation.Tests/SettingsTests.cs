@@ -131,6 +131,55 @@ public class JsonFileStoreTests
     }
 
     [Fact]
+    public void テーマ項目のない既存の設定はWindowsに合わせるとして読む()
+    {
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("settings.json"), "{\"Version\":1,\"Profiles\":[]}");
+        var store = Settings(dir.File("settings.json"));
+        store.Load();
+        Assert.False(store.IsCorrupt);
+        Assert.Equal(ThemePreference.System, store.Value.Theme);
+    }
+
+    [Fact]
+    public void テーマを保存して読み戻せる()
+    {
+        using var dir = new TempDir();
+        var store = Settings(dir.File("settings.json"));
+        store.Save(new AppSettings { Theme = ThemePreference.Dark });
+        Assert.Contains("\"Theme\": \"Dark\"", File.ReadAllText(dir.File("settings.json")));
+        var reloaded = Settings(dir.File("settings.json"));
+        reloaded.Load();
+        Assert.Equal(ThemePreference.Dark, reloaded.Value.Theme);
+    }
+
+    [Theory]
+    [InlineData("{\"Version\":1,\"Theme\":\"Sepia\"}")]
+    [InlineData("{\"Version\":1,\"Theme\":7}")]
+    public void 不正なテーマは壊れた設定として検出する(string content)
+    {
+        using var dir = new TempDir();
+        File.WriteAllText(dir.File("settings.json"), content);
+        var store = Settings(dir.File("settings.json"));
+        store.Load();
+        Assert.True(store.IsCorrupt);
+    }
+
+    [Fact]
+    public void WithThemeはテーマだけを変えた別の複製を返す()
+    {
+        var p = TestProfiles.Create(ProviderKind.AzureMai);
+        var saved = new AppSettings { Profiles = { p }, ActiveProfileId = p.Id, MicrophoneDeviceId = "mic" };
+        var changed = saved.WithTheme(ThemePreference.Light);
+        Assert.Equal(ThemePreference.Light, changed.Theme);
+        Assert.Equal(ThemePreference.System, saved.Theme);
+        Assert.Equal(p.Id, changed.ActiveProfileId);
+        Assert.Equal("mic", changed.MicrophoneDeviceId);
+        Assert.Equal(p.Id, Assert.Single(changed.Profiles).Id);
+        Assert.NotSame(p, changed.Profiles[0]); // 保存の失敗で元の設定を壊さない
+    }
+
+    [Fact]
     public void ファイルが無ければ空の設定で正常()
     {
         using var dir = new TempDir();
@@ -314,5 +363,74 @@ public class CredentialStoreTests
     {
         var id = Guid.NewGuid();
         Assert.Equal($"AnyDictation/credential/{id:D}", CredentialTargets.TargetFor(id));
+    }
+}
+
+public class AutoSaveTests
+{
+    static AppSettings Saved(params Profile[] profiles) =>
+        new() { Profiles = profiles.Select(p => p.Clone()).ToList(), ActiveProfileId = profiles.FirstOrDefault()?.Id, Theme = ThemePreference.Dark };
+
+    [Fact]
+    public void 正しい下書きはその内容で保存する()
+    {
+        var p = TestProfiles.Create(ProviderKind.AzureMai);
+        var saved = Saved(p);
+        var draft = p.Clone();
+        draft.Model = "edited";
+        var plan = AutoSave.Plan(saved, [draft], p.Id, "mic");
+        Assert.Equal("edited", Assert.Single(plan.Candidate.Profiles).Model);
+        Assert.Contains(p.Id, plan.Applied);
+        Assert.Equal(p.Id, plan.Candidate.ActiveProfileId);
+        Assert.Equal("mic", plan.Candidate.MicrophoneDeviceId);
+        Assert.Equal(ThemePreference.Dark, plan.Candidate.Theme); // テーマは保存済みの値を引き継ぐ
+        Assert.NotSame(draft, plan.Candidate.Profiles[0]);
+    }
+
+    [Fact]
+    public void 保存済みのプロファイルを不正な値に変えても保存済みの内容を保ちキーは適用しない()
+    {
+        var p = TestProfiles.Create(ProviderKind.AzureMai);
+        var saved = Saved(p);
+        var draft = p.Clone();
+        draft.Endpoint = "http://evil.example/";
+        var plan = AutoSave.Plan(saved, [draft], p.Id, null);
+        Assert.Equal(p.Endpoint, Assert.Single(plan.Candidate.Profiles).Endpoint);
+        Assert.DoesNotContain(p.Id, plan.Applied);
+        Assert.Equal(p.Id, plan.Candidate.ActiveProfileId);
+    }
+
+    [Fact]
+    public void 必要な項目がそろっていない新しいプロファイルは書かない()
+    {
+        var p = TestProfiles.Create(ProviderKind.AzureMai);
+        var added = Profile.CreateDefault(ProviderKind.AzureOpenAi); // エンドポイントが空
+        var plan = AutoSave.Plan(Saved(p), [p.Clone(), added], added.Id, null);
+        Assert.Equal(p.Id, Assert.Single(plan.Candidate.Profiles).Id);
+        Assert.DoesNotContain(added.Id, plan.Applied);
+        Assert.Null(plan.Candidate.ActiveProfileId); // 書かないプロファイルを使用先にしない
+        Assert.Empty(AppSettings.Validate(plan.Candidate));
+    }
+
+    [Fact]
+    public void 一覧から消した下書きは保存しない()
+    {
+        var a = TestProfiles.Create(ProviderKind.AzureMai);
+        var b = TestProfiles.Create(ProviderKind.OpenAiCompatible);
+        var plan = AutoSave.Plan(Saved(a, b), [b.Clone()], a.Id, null);
+        Assert.Equal(b.Id, Assert.Single(plan.Candidate.Profiles).Id);
+        Assert.Null(plan.Candidate.ActiveProfileId);
+    }
+
+    [Fact]
+    public void 項目ごとの検証は該当する項目を返す()
+    {
+        var p = Profile.CreateDefault(ProviderKind.AzureOpenAiLive);
+        p.Name = " ";
+        p.Language = "日本語";
+        p.LiveUsdPerMinute = -1;
+        var fields = ProfileValidator.ValidateFields(p).Select(e => e.Field).ToList();
+        Assert.Equal([ProfileField.Name, ProfileField.Endpoint, ProfileField.Language, ProfileField.LiveRate], fields);
+        Assert.Equal(ProfileValidator.ValidateFields(p).Select(e => e.Message), ProfileValidator.Validate(p));
     }
 }

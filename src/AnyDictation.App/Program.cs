@@ -72,6 +72,7 @@ internal sealed class AnyApp : Application
 
         _settings = new JsonFileStore<AppSettings>(AppPaths.SettingsFile, AppSettings.Validate);
         _settings.Load();
+        AppTheme.Initialize(this, _settings.Value.Theme); // 設定が壊れているときは既定(Windows に合わせる)
         _historyStore = new JsonFileStore<HistoryData>(AppPaths.HistoryFile, HistoryData.Validate);
         _historyStore.Load();
         var history = new HistoryLog(_historyStore);
@@ -81,6 +82,7 @@ internal sealed class AnyApp : Application
         _status = new StatusWindow();
         _controller = new DictationController(_settings, creds, history, _status);
         _settingsWindow = new SettingsWindow(_settings, creds, _historyStore, history, _controller);
+        AppTheme.Watch(_settingsWindow);
         if (E2eMode.Enabled)
         {
             _settingsWindow.ShowUpdateState(_versionText + "E2E テストでは更新を確認しません。", canApply: false);
