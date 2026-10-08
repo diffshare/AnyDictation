@@ -4,9 +4,11 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Globalization;
+using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Threading;
 using AnyDictation.ViewModels;
 using static AnyDictation.App.AppLog;
@@ -15,10 +17,14 @@ namespace AnyDictation.App;
 
 internal enum SettingsTab { Profile, Microphone, History, General, Help }
 
-/// <summary>プロファイル一覧の 1 行。IsActive は保存後に使うプロファイル(編集中の使用先)。</summary>
-internal sealed record ProfileRow(Profile Profile, string Name, string Summary, bool IsActive);
+/// <summary>プロファイル一覧の 1 行。IsActive は使用中、NeedsInput は入力が足りず下書きのまま保存していない。</summary>
+internal sealed record ProfileRow(Profile Profile, string Name, string Summary, bool IsActive, bool NeedsInput);
 
-/// <summary>プロファイル(接続先とAPIキー)、マイク、履歴、一般、使い方の画面。閉じるとトレイへ隠れる。</summary>
+/// <summary>
+/// プロファイル(接続先とAPIキー)、マイク、履歴、一般、使い方の画面。閉じるとトレイへ隠れる。
+/// 変更はすぐに保存する(「保存」ボタンはない)。入力欄は抜けたとき(または Enter)、選択や追加・削除は操作した時点で保存する。
+/// 画面は編集中の下書き(_draft)を持ち、保存してよい部分だけを書き込む(AutoSave.Plan)。
+/// </summary>
 internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialogs
 {
     static readonly KeyValuePair<string, string>[] Shortcuts =
@@ -42,11 +48,12 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
 
     List<Profile> _draft = new();
     Guid? _draftActive;
+    // 保存待ちのキー操作。プロファイルが正しい内容で保存されるときに一緒に書く(AutoSavePlan.Applied)
     readonly Dictionary<Guid, string> _newKeys = new();
     readonly HashSet<Guid> _keyDeletes = new();
     Profile? _current;
     bool _loading;
-    bool _dirty;
+    bool _persisting;
 
     public bool AllowClose { get; set; }
     public event Action? UpdateRequested;
@@ -83,10 +90,14 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
         }
     }
 
-    /// <summary>設定画面を前面に出す。</summary>
+    /// <summary>設定画面を前面に出す。入力が足りず保存していない下書きは、アプリを終了するまで残す。</summary>
     public void Open(SettingsTab tab = SettingsTab.Profile)
     {
-        if (!IsVisible) Reload();
+        if (!IsVisible)
+        {
+            _historyView.Refresh();
+            StartupBox.IsChecked = StartupRegistration.IsEnabled();
+        }
         LastLiveCostText.Text = _controller.LiveCostText is { Length: > 0 } cost ? cost : "まだ Live を使用していません。";
         Tabs.SelectedItem = tab switch
         {
@@ -104,6 +115,7 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
     protected override void OnClosing(CancelEventArgs e)
     {
         StopMicrophoneTest();
+        Persist(); // 入力中の欄も確定して保存する
         if (!AllowClose)
         {
             e.Cancel = true;
@@ -114,6 +126,7 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
 
     // ---- 読み込み ----
 
+    /// <summary>保存済みの設定から画面を作り直す。起動時と、壊れたファイルを退避した後に呼ぶ。</summary>
     void Reload()
     {
         _loading = true;
@@ -139,26 +152,9 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
         }
         ShowProfile(_draft.FirstOrDefault());
         SelectInList(_current);
-        _dirty = false;
-        DirtyText.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>利用者の編集操作で呼ぶ。読み込み中の画面更新では何もしない。</summary>
-    void MarkDirty()
-    {
-        if (_loading || _dirty) return;
-        _dirty = true;
-        SaveResultText.Text = ""; // 直前の保存結果は、これ以降の編集には当てはまらない
-        DirtyText.Visibility = Visibility.Visible;
-    }
-
-    void OnFormEdited(object sender, RoutedEventArgs e) => MarkDirty();
-
-    void OnEndpointEdited(object sender, RoutedEventArgs e)
-    {
-        UpdateEndpointPlaceholder();
-        MarkDirty();
-    }
+    void OnEndpointEdited(object sender, RoutedEventArgs e) => UpdateEndpointPlaceholder();
 
     void UpdateEndpointPlaceholder()
     {
@@ -170,15 +166,18 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
     {
         SettingsCorruptBanner.Visibility = _settings.IsCorrupt ? Visibility.Visible : Visibility.Collapsed;
         SettingsCorruptText.Text = $"設定ファイルを読み込めませんでした: {_settings.CorruptReason}\n" +
-            $"ファイルは上書きせず保持しています({AppPaths.SettingsFile})。内容を確認するか、下のボタンで別名へ退避して初期化してください。退避するまで保存はできません。";
-        SaveButton.IsEnabled = ThemeBox.IsEnabled = !_settings.IsCorrupt; // 壊れたファイルは上書きしない
+            $"ファイルは上書きせず保持しています({AppPaths.SettingsFile})。内容を確認するか、下のボタンで別名へ退避して初期化してください。退避するまで設定は変更できません。";
+        // 壊れたファイルは上書きしないため、保存につながる操作を止める
+        bool editable = !_settings.IsCorrupt;
+        AddButtons.IsEnabled = MicrophoneBox.IsEnabled = ThemeBox.IsEnabled = editable;
     }
 
     void RefreshProfileList(Profile? select)
     {
         bool was = _loading;
         _loading = true;
-        ProfileList.ItemsSource = _draft.Select(p => new ProfileRow(p, p.Name, Summarize(p), p.Id == _draftActive)).ToList();
+        ProfileList.ItemsSource = _draft.Select(p => new ProfileRow(p, p.Name, Summarize(p),
+            p.Id == _settings.Value.ActiveProfileId, ProfileValidator.Validate(p).Count > 0)).ToList();
         _loading = was;
         SelectInList(select);
     }
@@ -205,21 +204,102 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
         _loading = was;
     }
 
+    // ---- 即時保存 ----
+
+    /// <summary>
+    /// 入力中の欄を下書きへ反映し、保存してよい部分を書き込む。変更がなければ何もしない。
+    /// 不正な欄や足りない欄は、該当する入力欄の下に示す(その下書きは直るまで保存しない)。
+    /// </summary>
+    SaveResult? Persist()
+    {
+        if (_loading || _persisting || _settings.IsCorrupt) return null;
+        _persisting = true;
+        try
+        {
+            CommitForm();
+            var plan = AutoSave.Plan(_settings.Value, _draft, _draftActive, _draftMicrophoneId);
+            var newKeys = _newKeys.Where(k => plan.Applied.Contains(k.Key)).ToDictionary(k => k.Key, k => k.Value);
+            var keyDeletes = _keyDeletes.Where(plan.Applied.Contains).ToList();
+            SaveResult? result = null;
+            if (newKeys.Count > 0 || keyDeletes.Count > 0 || !SameContent(plan.Candidate, _settings.Value))
+            {
+                // キーは新しい資格情報 ID へ書かれ、JSON の保存成功で参照が切り替わる。失敗しても設定とキーは保存前の組のまま
+                result = SettingsCommit.Commit(_settings, _creds, plan.Candidate, newKeys, keyDeletes);
+                if (result.Value.Status == SaveStatus.Failed) Log.SettingsSaveFailed();
+                else
+                {
+                    if (result.Value.Status == SaveStatus.SavedWithLeftovers) Log.SettingsSavedWithLeftovers();
+                    foreach (var id in newKeys.Keys) _newKeys.Remove(id);
+                    foreach (var id in keyDeletes) _keyDeletes.Remove(id);
+                    // 下書きの資格情報の参照を、保存済みの値にそろえる(次の比較と保存で古い参照を使わない)
+                    foreach (var saved in _settings.Value.Profiles)
+                        if (_draft.FirstOrDefault(d => d.Id == saved.Id) is { } d) d.CredentialId = saved.CredentialId;
+                }
+            }
+            ShowSaveResult(result);
+            RefreshProfileList(_current);
+            UpdateActiveText();
+            UpdateKeyState();
+            ShowFieldErrors();
+            return result;
+        }
+        finally
+        {
+            _persisting = false;
+        }
+    }
+
+    static bool SameContent(AppSettings a, AppSettings b) => JsonSerializer.Serialize(a) == JsonSerializer.Serialize(b);
+
+    /// <summary>保存の失敗と、保存はできたが古いキーを消せなかったときだけ示す。成功は表示しない。</summary>
+    void ShowSaveResult(SaveResult? result)
+    {
+        if (result is not { } r || r.Status == SaveStatus.Saved)
+        {
+            SaveResultText.Text = "";
+            return;
+        }
+        SaveResultText.SetResourceReference(ForegroundProperty, r.Status == SaveStatus.Failed ? "ErrorText" : "WarningText");
+        SaveResultText.Text = r.Message;
+    }
+
+    void ShowFieldErrors()
+    {
+        var errors = _current == null ? [] : ProfileValidator.ValidateFields(_current);
+        string For(ProfileField field) => string.Join("\n", errors.Where(e => e.Field == field).Select(e => e.Message));
+        NameError.Text = For(ProfileField.Name);
+        EndpointError.Text = For(ProfileField.Endpoint);
+        ModelError.Text = For(ProfileField.Model);
+        LanguageError.Text = For(ProfileField.Language);
+        LiveRateError.Text = For(ProfileField.LiveRate);
+    }
+
+    void OnFormFocusLeft(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (e.OriginalSource is TextBox or PasswordBox) Persist();
+    }
+
+    void OnFormKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && e.OriginalSource is TextBox or PasswordBox) Persist();
+    }
+
     // ---- プロファイル編集 ----
 
     void OnProfileSelected(object sender, SelectionChangedEventArgs e)
     {
         if (_loading) return;
-        CommitForm();
-        var selected = (ProfileList.SelectedItem as ProfileRow)?.Profile;
+        var selected = (ProfileList.SelectedItem as ProfileRow)?.Profile; // 保存で一覧を作り直す前に、選んだ行を控える
+        Persist();
         ShowProfile(selected);
+        SelectInList(selected);
     }
 
     void ShowProfile(Profile? p)
     {
         _loading = true;
         _current = p;
-        Form.IsEnabled = p != null;
+        Form.IsEnabled = p != null && !_settings.IsCorrupt;
         if (p != null)
         {
             NameBox.Text = p.Name;
@@ -239,10 +319,11 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
             KeyStateText.Text = "";
         }
         UpdateActiveText();
+        ShowFieldErrors();
         _loading = false;
     }
 
-    /// <summary>保存済みの使用先と、保存後の使用先(編集中の _draftActive)を並べて示す。</summary>
+    /// <summary>このプロファイルが使用中か、入力が足りず保存していないかを示す。</summary>
     void UpdateActiveText()
     {
         if (_current == null)
@@ -250,18 +331,29 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
             ActiveText.Text = "";
             return;
         }
-        var saved = _settings.Value.ActiveProfileId;
-        string Describe(Guid? id, IEnumerable<Profile> source) =>
-            id == null ? "なし"
-            : id == _current.Id ? "このプロファイル"
-            : source.FirstOrDefault(p => p.Id == id) is { } p ? $"「{p.Name}」" : "不明";
-        string savedText = Describe(saved, _settings.Value.Profiles) +
-            (saved != null && _draft.All(p => p.Id != saved) ? "(削除予定)" : "");
-        string afterText = Describe(_draftActive, _draft);
-        bool changed = saved != _draftActive;
-        ActiveText.Text = $"現在の使用先(保存済み): {savedText}\n保存後の使用先: {afterText}" + (changed ? "" : "(変更なし)");
-        ActiveText.SetResourceReference(ForegroundProperty, changed ? "WarningText" : _draftActive == _current.Id ? "SuccessText" : "TextSecondary");
-        UseButton.IsEnabled = _draftActive != _current.Id;
+        bool valid = ProfileValidator.Validate(_current).Count == 0;
+        bool saved = _settings.Value.Profiles.Any(p => p.Id == _current.Id);
+        var active = _settings.Value.ActiveProfile;
+        string key;
+        if (!valid)
+        {
+            ActiveText.Text = saved
+                ? "入力に誤りがあります。直すまでは保存済みの内容を使います。"
+                : "入力が必要な項目があります。そろうと保存します。";
+            key = "WarningText";
+        }
+        else if (active?.Id == _current.Id)
+        {
+            ActiveText.Text = "このプロファイルを使用中です。";
+            key = "SuccessText";
+        }
+        else
+        {
+            ActiveText.Text = active != null ? $"使用中のプロファイル: 「{active.Name}」" : "使用中のプロファイルはありません。";
+            key = "TextSecondary";
+        }
+        ActiveText.SetResourceReference(ForegroundProperty, key);
+        UseButton.IsEnabled = valid && active?.Id != _current.Id;
     }
 
     void CommitForm()
@@ -286,8 +378,9 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
     {
         if (_current == null) return;
         var id = _current.Id;
-        if (_newKeys.ContainsKey(id)) { KeyStateText.Text = "新しいキーを入力済み(保存で反映されます)"; return; }
-        if (_keyDeletes.Contains(id)) { KeyStateText.Text = "キーを削除予定(保存で反映されます)"; return; }
+        // 保存待ちのキー操作は、プロファイルの入力がそろって保存されるときに反映する
+        if (_newKeys.ContainsKey(id)) { KeyStateText.Text = "新しいキーを入力済みです(入力がそろうと保存します)"; return; }
+        if (_keyDeletes.Contains(id)) { KeyStateText.Text = "キーの削除を予約済みです(入力がそろうと反映します)"; return; }
         try
         {
             KeyStateText.Text = _current.CredentialId is { } credId && _creds.Read(CredentialTargets.TargetFor(credId)) != null
@@ -302,15 +395,15 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
 
     void AddProfile(ProviderKind kind)
     {
-        CommitForm();
+        Persist();
         var p = Profile.CreateDefault(kind);
         string baseName = p.Name;
         for (int i = 2; _draft.Any(x => x.Name == p.Name); i++) p.Name = $"{baseName} {i}";
         _draft.Add(p);
-        _draftActive ??= p.Id;
-        RefreshProfileList(p);
+        _draftActive ??= p.Id; // 使用中がなければ、入力がそろって保存された時点で使用中にする
         ShowProfile(p);
-        MarkDirty();
+        Persist(); // 既定値だけで足りるサービス(OpenAI 互換)はすぐ保存される
+        SelectInList(p);
     }
 
     void OnAddAzure(object s, RoutedEventArgs e) => AddProfile(ProviderKind.AzureMai);
@@ -325,13 +418,13 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
         LiveNote.Visibility = LiveCostForm.Visibility = visibility;
         ModelLabel.Text = kind is ProviderKind.AzureOpenAi or ProviderKind.AzureOpenAiLive ? "デプロイ名" : "モデル";
         UpdateEndpointPlaceholder();
-        MarkDirty();
+        Persist();
     }
 
     void OnDeleteProfile(object s, RoutedEventArgs e)
     {
         if (_current == null) return;
-        if (MessageBox.Show(this, $"プロファイル「{_current.Name}」と保存済みのAPIキーを削除します(「保存」で確定)。よろしいですか?",
+        if (MessageBox.Show(this, $"プロファイル「{_current.Name}」と保存済みのAPIキーを削除します。元には戻せません。よろしいですか?",
                 "Any Dictation", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
         var id = _current.Id;
         _draft.Remove(_current);
@@ -339,73 +432,27 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
         _keyDeletes.Remove(id);
         if (_draftActive == id) _draftActive = null;
         _current = null;
-        RefreshProfileList(null);
+        Persist();
         ShowProfile(_draft.FirstOrDefault());
         SelectInList(_current);
-        MarkDirty();
     }
 
     void OnDeleteKey(object s, RoutedEventArgs e)
     {
         if (_current == null) return;
+        if (MessageBox.Show(this, $"プロファイル「{_current.Name}」の保存済みのAPIキーを削除します。元には戻せません。よろしいですか?",
+                "Any Dictation", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
         KeyBox.Clear();
         _newKeys.Remove(_current.Id);
         _keyDeletes.Add(_current.Id);
-        UpdateKeyState();
-        MarkDirty();
+        Persist();
     }
 
     void OnUseProfile(object s, RoutedEventArgs e)
     {
         if (_current == null) return;
-        CommitForm();
         _draftActive = _current.Id;
-        var cur = _current;
-        RefreshProfileList(cur);
-        ShowProfile(cur);
-        MarkDirty();
-    }
-
-    void OnSave(object s, RoutedEventArgs e)
-    {
-        StopMicrophoneTest();
-        CommitForm();
-        // テーマは選んだ時点で保存済み。下書きにはないため、保存済みの値を引き継ぐ
-        var theme = _settings.Value.Theme;
-        var candidate = new AppSettings { Profiles = _draft, ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId, Theme = theme };
-        var errors = AppSettings.Validate(candidate);
-        if (errors.Count > 0)
-        {
-            SaveResultText.SetResourceReference(ForegroundProperty, "ErrorText");
-            SaveResultText.Text = string.Join("\n", errors);
-            return;
-        }
-        // 候補は複製を渡す。キーは新しい資格情報 ID へ書かれ、JSON の保存成功で参照が切り替わる。
-        // 失敗しても設定と各プロファイルのキーは保存前の組のまま(入力中の内容はこの画面に残る)
-        var committed = new AppSettings { Profiles = _draft.Select(p => p.Clone()).ToList(), ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId, Theme = theme };
-        var result = SettingsCommit.Commit(_settings, _creds, committed, _newKeys, _keyDeletes);
-        if (result.Status == SaveStatus.Failed)
-        {
-            Log.SettingsSaveFailed();
-            SaveResultText.SetResourceReference(ForegroundProperty, "ErrorText");
-            SaveResultText.Text = result.Message;
-            return;
-        }
-        if (result.Status == SaveStatus.SavedWithLeftovers) Log.SettingsSavedWithLeftovers();
-
-        // 保存済みの内容(新しい資格情報 ID を含む)から画面を読み直し、編集中のプロファイルを選び直す
-        var curId = _current?.Id;
-        Reload();
-        var again = _draft.FirstOrDefault(p => p.Id == curId);
-        if (again != null)
-        {
-            RefreshProfileList(again);
-            ShowProfile(again);
-        }
-        SaveResultText.SetResourceReference(ForegroundProperty, result.Status == SaveStatus.Saved ? "SuccessText" : "WarningText");
-        SaveResultText.Text = result.Status == SaveStatus.Saved && _draftActive == null && _draft.Count > 0
-            ? "保存しました。ただし使用するプロファイルが選択されていません。"
-            : result.Message;
+        Persist();
     }
 
     void OnQuarantineSettings(object s, RoutedEventArgs e)
@@ -462,14 +509,14 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
             {
                 selected = new ComboBoxItem { Content = "保存したマイク（未接続または識別できません）", Tag = _draftMicrophoneId, IsEnabled = false };
                 MicrophoneBox.Items.Add(selected);
-                MicrophoneTestText.Text = "保存したマイクが利用できません。接続を確認して一覧を再読み込みするか、別のマイクを選んで保存してください。";
+                MicrophoneTestText.Text = "保存したマイクが利用できません。接続を確認して一覧を再読み込みするか、別のマイクを選んでください。";
             }
             MicrophoneBox.SelectedItem = selected;
         }
         catch (Exception e)
         {
             MicrophoneTestText.Text = "マイク一覧を取得できません: " + e.Message;
-            // 取得失敗時も未保存の選択を維持する。既定マイクへの暗黙の切替えは行わない。
+            // 取得失敗時も保存済みの選択を維持する。既定マイクへの暗黙の切替えは行わない。
             var retained = new ComboBoxItem { Content = "現在の選択（一覧取得失敗）", Tag = _draftMicrophoneId };
             MicrophoneBox.Items.Add(retained);
             MicrophoneBox.SelectedItem = retained;
@@ -483,9 +530,18 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
     {
         if (_loading) return;
         StopMicrophoneTest();
+        var previous = _draftMicrophoneId;
         _draftMicrophoneId = (MicrophoneBox.SelectedItem as ComboBoxItem)?.Tag as string;
-        MarkDirty();
-        MicrophoneTestText.Text = "選択を変更しました。入力テストは未保存の選択を使います。本録音に使うには、下の「保存」を押してください。";
+        var result = Persist();
+        if (result is { Status: SaveStatus.Failed } failed)
+        {
+            // 保存できなければ選択を戻す(表示と保存済みの値を食い違わせない)
+            _draftMicrophoneId = previous;
+            RefreshMicrophones();
+            MicrophoneTestText.Text = failed.Message;
+            return;
+        }
+        MicrophoneTestText.Text = "選択を保存しました。次の録音から使います。";
     }
 
     void OnBeginMicrophoneTest(object sender, RoutedEventArgs e)
@@ -556,7 +612,7 @@ internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialo
 
     // ---- 一般 ----
 
-    /// <summary>テーマは選んだ時点で反映して保存する(「保存」は不要)。保存するのは保存済みの設定のテーマだけで、編集中の下書きは含めない。</summary>
+    /// <summary>テーマは選んだ時点で反映して保存する。保存するのは保存済みの設定のテーマだけで、入力が足りない下書きは含めない。</summary>
     void OnThemeSelected(object s, SelectionChangedEventArgs e)
     {
         if (_loading || ThemeBox.SelectedItem is not ComboBoxItem { Tag: ThemePreference theme } || theme == _settings.Value.Theme) return;

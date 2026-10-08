@@ -25,28 +25,26 @@ public sealed class GuiFactAttribute : FactAttribute
 public sealed class SettingsGuiTests(ITestOutputHelper output)
 {
     [GuiFact]
-    public void LiveProfileWithoutRatePersistsAcrossRestart()
+    public void LiveProfileWithoutRateIsSavedWhenLeavingFieldsAndPersistsAcrossRestart()
     {
         using var run = new GuiRun(output);
         run.Check(() =>
         {
             run.Start();
-            Assert.False(run.Exists("DirtyText")); // 起動直後の読み込みでは未保存にならない
+            Assert.False(File.Exists(run.Settings)); // 起動直後の読み込みでは書き込まない
             run.InvokeName("Azure OpenAI Live を追加");
             run.Set("NameBox", "E2E Live");
-            run.Set("EndpointBox", "https://e2e.invalid/");
+            run.Set("EndpointBox", "https://e2e.invalid/"); // 必要な項目がそろった時点で保存する
+            run.WaitFor(() => File.Exists(run.Settings) && File.ReadAllText(run.Settings).Contains("E2E Live"));
             run.Set("ModelBox", "e2e-deployment");
             run.Set("LanguageBox", "ja");
             Assert.Equal("", run.Value("LiveRateBox"));
-            Assert.True(run.Exists("DirtyText"));
-            run.SelectName("履歴"); // 保存はどのタブからでも押せる
-            run.Invoke("SaveButton");
-            run.WaitFor(() => File.Exists(run.Settings));
-            Assert.False(run.Exists("DirtyText"));
+            run.WaitFor(() => File.ReadAllText(run.Settings).Contains("e2e-deployment"));
             using (var saved = JsonDocument.Parse(File.ReadAllText(run.Settings)))
             {
                 var profile = saved.RootElement.GetProperty("Profiles")[0];
                 Assert.Equal("E2E Live", profile.GetProperty("Name").GetString());
+                Assert.Equal("ja", profile.GetProperty("Language").GetString());
                 Assert.Equal(JsonValueKind.Null, profile.GetProperty("LiveUsdPerMinute").ValueKind);
             }
             run.Restart();
@@ -59,7 +57,25 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
     }
 
     [GuiFact]
-    public void InvalidLiveRateDoesNotOverwriteSavedProfileAndValidRatePersists()
+    public void IncompleteProfileIsNotSavedUntilRequiredFieldsAreFilled()
+    {
+        using var run = new GuiRun(output);
+        run.Check(() =>
+        {
+            run.Start();
+            run.InvokeName("Azure OpenAI を追加");
+            run.Set("NameBox", "E2E Draft"); // エンドポイントが空のままなので保存しない
+            run.Settle();
+            Assert.False(File.Exists(run.Settings));
+            Assert.Contains("エンドポイント", run.Element("EndpointError").Name);
+            run.Set("EndpointBox", "https://e2e.invalid/");
+            run.WaitFor(() => File.Exists(run.Settings) && File.ReadAllText(run.Settings).Contains("E2E Draft"));
+            Assert.False(run.Exists("EndpointError"));
+        });
+    }
+
+    [GuiFact]
+    public void InvalidLiveRateKeepsSavedProfileAndValidRatePersists()
     {
         using var run = new GuiRun(output);
         run.Check(() =>
@@ -67,23 +83,18 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
             run.Start();
             run.InvokeName("Azure OpenAI Live を追加");
             run.Set("EndpointBox", "https://e2e.invalid/");
-            run.Invoke("SaveButton");
             run.WaitFor(() => File.Exists(run.Settings));
             string original = File.ReadAllText(run.Settings);
             foreach (var invalid in new[] { "abc", "0", "-0.017" })
             {
                 run.Set("LiveRateBox", invalid);
-                run.Invoke("SaveButton");
-                run.WaitFor(() => run.Element("SaveResultText").Name.Contains("単価"));
-                Assert.Equal(original, File.ReadAllText(run.Settings));
-                Assert.True(run.Exists("DirtyText")); // 失敗した保存は未保存のまま残る
+                run.WaitFor(() => run.Exists("LiveRateError") && run.Element("LiveRateError").Name.Contains("単価"));
+                Assert.Equal(original, File.ReadAllText(run.Settings)); // 不正な値は保存せず、保存済みの内容を保つ
+                Assert.Contains("保存済みの内容を使います", run.Element("ActiveText").Name);
             }
-            run.Set("LiveRateBox", "-0.5"); // 追加の編集でエラー表示を消さない
-            Assert.Contains("単価", run.Element("SaveResultText").Name);
             run.Set("LiveRateBox", "0.017");
-            run.Invoke("SaveButton");
             run.WaitFor(() => File.ReadAllText(run.Settings) != original);
-            Assert.False(run.Exists("DirtyText"));
+            Assert.False(run.Exists("LiveRateError"));
             run.Restart();
             Assert.Equal("0.017", run.Value("LiveRateBox"));
         });
@@ -108,12 +119,12 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
             run.SelectName("マイク");
             Assert.False(run.Element("MicrophoneStartButton").IsEnabled);
             Assert.False(run.Element("MicrophoneStopButton").IsEnabled);
-            Assert.False(run.Exists("DirtyText")); // タブを巡っても未保存にならない
+            Assert.False(File.Exists(run.Settings)); // タブを巡っても書き込まない
         });
     }
 
     [GuiFact]
-    public void SaveBarAndEveryControlAreReachableOnEveryTabAtDefaultAndMinimumSize()
+    public void EveryControlIsReachableOnEveryTabAtDefaultAndMinimumSize()
     {
         using var run = new GuiRun(output);
         run.Check(() =>
@@ -137,23 +148,20 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
                 {
                     run.SelectName(tab);
                     run.Settle();
-                    run.AssertReachable("SaveButton");
-                    Assert.True(run.Element("SaveButton").Properties.IsKeyboardFocusable.Value);
                     foreach (var id in ids) run.AssertReachable(id);
                     run.Shot($"{tab}-{size}");
                 }
             }
             run.SelectName("プロファイル");
-            run.Set("LiveRateBox", "0.017"); // 最小サイズでも未保存表示と結果表示が保存ボタンを押し出さない
+            run.Set("LiveRateBox", "abc"); // 最小サイズでも欄の下のエラーが読める
             run.Settle();
-            run.AssertReachable("DirtyText");
-            run.AssertReachable("SaveButton");
-            run.Shot("プロファイル-min-dirty");
+            run.AssertReachable("LiveRateError");
+            run.Shot("プロファイル-min-error");
         });
     }
 
     [GuiFact]
-    public void UseTargetShowsSavedAndAfterSaveStatesAndPersists()
+    public void UseTargetIsSavedImmediatelyAndPersists()
     {
         using var run = new GuiRun(output);
         run.Check(() =>
@@ -165,41 +173,34 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
             run.Set("NameBox", "A");
             run.Set("EndpointBox", "https://e2e.invalid/");
             Assert.False(run.Exists("EndpointPlaceholder"));
-            run.InvokeName("OpenAI / 互換を追加");
+            // 使用中がない状態で最初に追加した A は、入力がそろって保存された時点で使用中になる
+            run.WaitFor(() => run.Element("ActiveText").Name.Contains("使用中です"));
+            run.InvokeName("OpenAI / 互換を追加"); // 既定値だけで足りるため、すぐ保存される
             run.Set("NameBox", "B");
-            // 未保存の A が最初の追加で使用先になっている。B を表示中は「保存後の使用先: A」
-            Assert.Contains("保存済み): なし", run.Element("ActiveText").Name);
-            Assert.Contains("保存後の使用先: 「A」", run.Element("ActiveText").Name);
+            Assert.Contains("使用中のプロファイル: 「A」", run.Element("ActiveText").Name);
             Assert.True(run.Element("UseButton").IsEnabled);
             run.Invoke("UseButton");
-            Assert.Contains("保存後の使用先: このプロファイル", run.Element("ActiveText").Name);
+            run.WaitFor(() => run.Element("ActiveText").Name.Contains("使用中です"));
             Assert.False(run.Element("UseButton").IsEnabled);
-            run.Shot("use-unsaved");
-            run.Invoke("SaveButton");
-            run.WaitFor(() => File.Exists(run.Settings));
-            run.WaitFor(() => !run.Exists("DirtyText"));
-            Assert.Contains("保存済み): このプロファイル", run.Element("ActiveText").Name);
-            Assert.Contains("(変更なし)", run.Element("ActiveText").Name);
+            run.Shot("use-saved");
+            string IdOf(string name)
+            {
+                using var saved = JsonDocument.Parse(File.ReadAllText(run.Settings));
+                return saved.RootElement.GetProperty("Profiles").EnumerateArray()
+                    .Single(p => p.GetProperty("Name").GetString() == name).GetProperty("Id").GetString()!;
+            }
+            string ActiveId()
+            {
+                using var saved = JsonDocument.Parse(File.ReadAllText(run.Settings));
+                return saved.RootElement.GetProperty("ActiveProfileId").GetString()!;
+            }
+            run.WaitFor(() => ActiveId() == IdOf("B"));
 
+            run.Restart(); // 「保存」を押さずに閉じても、使用先の切替は保存済み
             run.SelectListItem("ProfileList", "A");
-            Assert.False(run.Exists("DirtyText")); // 選択だけでは未保存にならない
-            Assert.Contains("保存済み): 「B」", run.Element("ActiveText").Name);
-            Assert.Contains("保存後の使用先: 「B」(変更なし)", run.Element("ActiveText").Name);
+            Assert.Contains("使用中のプロファイル: 「B」", run.Element("ActiveText").Name);
             run.Invoke("UseButton");
-            Assert.True(run.Exists("DirtyText"));
-            Assert.Contains("保存後の使用先: このプロファイル", run.Element("ActiveText").Name);
-            run.Shot("use-switch-unsaved");
-            run.Restart(); // 保存せず閉じると、使用先の切替は破棄される
-            Assert.False(run.Exists("DirtyText"));
-            run.SelectListItem("ProfileList", "A");
-            Assert.Contains("保存済み): 「B」", run.Element("ActiveText").Name);
-            run.Invoke("UseButton");
-            run.Invoke("SaveButton");
-            run.WaitFor(() => !run.Exists("DirtyText"));
-            using var saved = JsonDocument.Parse(File.ReadAllText(run.Settings));
-            var profiles = saved.RootElement.GetProperty("Profiles").EnumerateArray().ToList();
-            string idOfA = profiles.Single(p => p.GetProperty("Name").GetString() == "A").GetProperty("Id").GetString()!;
-            Assert.Equal(idOfA, saved.RootElement.GetProperty("ActiveProfileId").GetString());
+            run.WaitFor(() => ActiveId() == IdOf("A"));
         });
     }
 
@@ -211,7 +212,7 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
         run.Check(() =>
         {
             run.Start();
-            Assert.False(run.Element("SaveButton").IsEnabled);
+            Assert.False(run.ElementByName("Azure MAI を追加").IsEnabled); // 壊れたファイルを上書きする操作はできない
             Assert.Contains("上書きせず保持", run.Element("SettingsCorruptText").Name);
             Assert.Equal("{invalid-json", File.ReadAllText(run.Settings));
         });
@@ -289,7 +290,18 @@ internal sealed class GuiRun : IDisposable
             Thread.Sleep(50);
         }
     }
-    public void Set(string id, string value) => Element(id).Patterns.Value.Pattern.SetValue(value);
+    // 入力欄は抜けたときに保存されるため、値を入れた後にフォーカスを欄の外(表示中のタブ)へ移す。
+    public void Set(string id, string value)
+    {
+        var element = Element(id);
+        element.Focus();
+        element.Patterns.Value.Pattern.SetValue(value);
+        Element("Tabs").FindAllChildren(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.TabItem))
+            .First(x => x.Patterns.SelectionItem.Pattern.IsSelected.Value).Focus();
+        Settle();
+    }
+    public AutomationElement ElementByName(string name) =>
+        _window!.FindFirstDescendant(cf => cf.ByName(name)) ?? throw new InvalidOperationException("UIA 要素が見つかりません: " + name);
     public string Value(string id) => Element(id).Patterns.Value.Pattern.Value.Value;
     public void Invoke(string id) => Element(id).Patterns.Invoke.Pattern.Invoke();
     // 折りたたまれた要素は UIA に残るが IsOffscreen になるため、画面上にあるものだけを「ある」とみなす。

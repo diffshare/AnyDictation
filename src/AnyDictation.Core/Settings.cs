@@ -67,21 +67,26 @@ public static class ProfileValidator
         return ok;
     }
 
-    public static List<string> Validate(Profile p)
+    public static List<string> Validate(Profile p) => ValidateFields(p).Select(e => e.Message).ToList();
+
+    /// <summary>項目ごとの検証結果。設定画面は該当する入力欄の下にメッセージを出す。</summary>
+    public static List<(ProfileField Field, string Message)> ValidateFields(Profile p)
     {
-        var errors = new List<string>();
-        if (string.IsNullOrWhiteSpace(p.Name)) errors.Add("プロファイル名が空です。");
-        if (!Enum.IsDefined(p.Provider)) errors.Add("サービス種別が不正です。");
+        var errors = new List<(ProfileField, string)>();
+        if (string.IsNullOrWhiteSpace(p.Name)) errors.Add((ProfileField.Name, "プロファイル名が空です。"));
+        if (!Enum.IsDefined(p.Provider)) errors.Add((ProfileField.Provider, "サービス種別が不正です。"));
         if (!IsAllowedEndpoint(p.Endpoint, out _))
-            errors.Add("エンドポイントは https:// の URL にしてください(http:// は localhost / 127.0.0.1 / [::1] のみ可。認証情報・クエリ・フラグメントは不可)。");
-        if (string.IsNullOrWhiteSpace(p.Model)) errors.Add("モデルが空です。");
+            errors.Add((ProfileField.Endpoint, "エンドポイントは https:// の URL にしてください(http:// は localhost / 127.0.0.1 / [::1] のみ可。認証情報・クエリ・フラグメントは不可)。"));
+        if (string.IsNullOrWhiteSpace(p.Model)) errors.Add((ProfileField.Model, "モデルが空です。"));
         if (!string.IsNullOrEmpty(p.Language) && !LanguagePattern.IsMatch(p.Language))
-            errors.Add("言語は ja や en-US のような言語コードにしてください(空欄で自動判定)。");
+            errors.Add((ProfileField.Language, "言語は ja や en-US のような言語コードにしてください(空欄で自動判定)。"));
         if (p.LiveUsdPerMinute is <= 0 or > 1000000)
-            errors.Add("Live の単価は 0 より大きく 1000000 以下の USD/分にしてください(空欄で未設定)。");
+            errors.Add((ProfileField.LiveRate, "Live の単価は 0 より大きく 1000000 以下の USD/分にしてください(空欄で未設定)。"));
         return errors;
     }
 }
+
+public enum ProfileField { Name, Provider, Endpoint, Model, Language, LiveRate }
 
 /// <summary>画面の配色。System は Windows のライト / ダークに合わせる。</summary>
 public enum ThemePreference { System, Light, Dark }

@@ -49,6 +49,11 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+        <!-- 入力欄の直下に出すエラー。ラベル列の幅だけ字下げする -->
+        <Style x:Key="FieldError" TargetType="TextBlock" BasedOn="{StaticResource OptionalNote}">
+            <Setter Property="Foreground" Value="{DynamicResource ErrorText}"/>
+            <Setter Property="Margin" Value="122,-4,0,8"/>
+        </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
@@ -144,7 +149,6 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <ui:TitleBar Grid.Row="0" Title="Any Dictation 設定" Height="36" ShowMaximize="False"/>
 
@@ -154,7 +158,7 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="0,0,24,14">
                         <TextBlock Style="{StaticResource PageTitle}" Text="プロファイル"/>
-                        <TextBlock Style="{StaticResource Note}" Margin="0,2,0,12" Text="「使用中」は保存後に使うプロファイルです。一覧で選ぶと下で編集できます。"/>
+                        <TextBlock Style="{StaticResource Note}" Margin="0,2,0,12" Text="一覧で選ぶと下で編集できます。変更はすぐに保存されます。"/>
                         <Border x:Name="SettingsCorruptBanner" Style="{StaticResource ErrorBanner}" Visibility="Collapsed">
                             <StackPanel>
                                 <TextBlock x:Name="SettingsCorruptText" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource ErrorText}"/>
@@ -193,6 +197,7 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <StackPanel>
                                             <TextBlock Text="{Binding Name}" Style="{StaticResource CardTitle}" TextTrimming="CharacterEllipsis"/>
@@ -203,18 +208,23 @@
                                                 Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}">
                                             <TextBlock Text="使用中" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource BadgeFg}" VerticalAlignment="Center"/>
                                         </Border>
+                                        <TextBlock Grid.Column="2" Text="入力が必要" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource WarningText}"
+                                                   Margin="12,0,0,0" VerticalAlignment="Center"
+                                                   Visibility="{Binding NeedsInput, Converter={StaticResource BoolToVisibility}}"/>
                                     </Grid>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
 
                         <Border Style="{StaticResource Card}">
-                            <StackPanel x:Name="Form" IsEnabled="False">
+                            <!-- 入力欄は抜けたとき(または Enter)に保存する -->
+                            <StackPanel x:Name="Form" IsEnabled="False" LostKeyboardFocus="OnFormFocusLeft" PreviewKeyDown="OnFormKeyDown">
                                 <Grid Style="{StaticResource FieldRow}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="名前"/>
-                                    <TextBox x:Name="NameBox" Grid.Column="1" TextChanged="OnFormEdited"/>
+                                    <TextBox x:Name="NameBox" Grid.Column="1"/>
                                 </Grid>
+                                <TextBlock x:Name="NameError" Style="{StaticResource FieldError}"/>
                                 <Grid Style="{StaticResource FieldRow}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="サービス"/>
@@ -231,32 +241,36 @@
                                                    Margin="11,0,0,0" VerticalAlignment="Center"/>
                                     </Grid>
                                 </Grid>
+                                <TextBlock x:Name="EndpointError" Style="{StaticResource FieldError}"/>
                                 <TextBlock Style="{StaticResource Note}" Margin="122,-4,0,8" Text="Azure OpenAI / Live はリソースのルート URL"/>
                                 <Grid Style="{StaticResource FieldRow}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <TextBlock x:Name="ModelLabel" Style="{StaticResource FieldLabel}" Text="モデル"/>
-                                    <TextBox x:Name="ModelBox" Grid.Column="1" TextChanged="OnFormEdited"/>
+                                    <TextBox x:Name="ModelBox" Grid.Column="1"/>
                                 </Grid>
+                                <TextBlock x:Name="ModelError" Style="{StaticResource FieldError}"/>
                                 <Grid Style="{StaticResource FieldRow}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition Width="80"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="言語"/>
-                                    <TextBox x:Name="LanguageBox" Grid.Column="1" TextChanged="OnFormEdited"/>
+                                    <TextBox x:Name="LanguageBox" Grid.Column="1"/>
                                     <TextBlock Grid.Column="2" Style="{StaticResource Note}" Margin="12,0,0,0" VerticalAlignment="Center" Text="例: ja。空欄で自動判定"/>
                                 </Grid>
+                                <TextBlock x:Name="LanguageError" Style="{StaticResource FieldError}"/>
                                 <StackPanel x:Name="LiveCostForm" Visibility="Collapsed">
                                     <Grid Style="{StaticResource FieldRow}">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition Width="80"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                         <TextBlock Style="{StaticResource FieldLabel}" Text="単価 (USD/分)"/>
-                                        <TextBox x:Name="LiveRateBox" Grid.Column="1" TextChanged="OnFormEdited"/>
+                                        <TextBox x:Name="LiveRateBox" Grid.Column="1"/>
                                         <TextBlock Grid.Column="2" Style="{StaticResource Note}" Margin="12,0,0,0" VerticalAlignment="Center" Text="空欄で未設定"/>
                                     </Grid>
+                                    <TextBlock x:Name="LiveRateError" Style="{StaticResource FieldError}"/>
                                     <TextBlock Style="{StaticResource Note}" Margin="122,-4,0,8"
                                                Text="Azure の契約・リージョンの単価を入力してください。送信済音声の時間から概算し、請求確定額とは異なります。"/>
                                 </StackPanel>
                                 <Grid Style="{StaticResource FieldRow}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="122"/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <TextBlock Style="{StaticResource FieldLabel}" Text="API キー"/>
-                                    <PasswordBox x:Name="KeyBox" Grid.Column="1" PasswordChanged="OnFormEdited"/>
+                                    <PasswordBox x:Name="KeyBox" Grid.Column="1"/>
                                 </Grid>
                                 <StackPanel Orientation="Horizontal" Margin="122,-4,0,0">
                                     <TextBlock x:Name="KeyStateText" Style="{StaticResource Note}" Margin="0,0,12,0" VerticalAlignment="Center"/>
@@ -267,6 +281,7 @@
 
                                 <Border Height="1" Background="{DynamicResource Divider}" Margin="-16,14,-16,12"/>
                                 <TextBlock x:Name="ActiveText" TextWrapping="Wrap" FontSize="12" Margin="0,0,0,10"/>
+                                <TextBlock x:Name="SaveResultText" Style="{StaticResource OptionalNote}" Margin="0,-4,0,10"/>
                                 <StackPanel Orientation="Horizontal">
                                     <ui:Button x:Name="UseButton" Content="このプロファイルを使用する" Appearance="Primary" Click="OnUseProfile" Margin="0,0,8,0"/>
                                     <ui:Button Content="このプロファイルを削除" Appearance="Secondary" Click="OnDeleteProfile"/>
@@ -278,7 +293,7 @@
                             <StackPanel>
                                 <TextBlock Style="{StaticResource CardTitle}" Text="プロファイルを追加"/>
                                 <TextBlock Style="{StaticResource Note}" Text="使うサービスを選んで追加します。"/>
-                                <WrapPanel Margin="0,10,0,0">
+                                <WrapPanel x:Name="AddButtons" Margin="0,10,0,0">
                                     <ui:Button Content="Azure MAI を追加" Appearance="Secondary" Margin="0,0,8,6" Click="OnAddAzure"/>
                                     <ui:Button Content="Azure OpenAI を追加" Appearance="Secondary" Margin="0,0,8,6" Click="OnAddAzureOpenAi"/>
                                     <ui:Button Content="Azure OpenAI Live を追加" Appearance="Secondary" Margin="0,0,8,6" Click="OnAddAzureOpenAiLive"/>
@@ -333,7 +348,7 @@
                                 </StackPanel>
                                 <TextBlock x:Name="MicrophoneTestText" Style="{StaticResource Note}" Foreground="{DynamicResource TextBody}" Margin="0,10,0,0"/>
                                 <TextBlock Style="{StaticResource Note}" Margin="0,6,0,0"
-                                           Text="未保存の選択も試せます。15 秒で止まります。音声は保存・送信せず、履歴にも残しません。入力テスト中は Ctrl + Win による本録音を開始できません。"/>
+                                           Text="15 秒で止まります。音声は保存・送信せず、履歴にも残しません。入力テスト中は Ctrl + Win による本録音を開始できません。"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -436,7 +451,7 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Style="{StaticResource CardTitle}" Text="サインイン時に起動"/>
-                                    <TextBlock Style="{StaticResource Note}" Text="Windows にサインインしたらトレイに常駐します。切り替えた時点で反映し、「保存」は不要です"/>
+                                    <TextBlock Style="{StaticResource Note}" Text="Windows にサインインしたらトレイに常駐します"/>
                                     <TextBlock x:Name="StartupResultText" Style="{StaticResource OptionalNote}" Foreground="{DynamicResource ErrorText}"/>
                                 </StackPanel>
                                 <ui:ToggleSwitch x:Name="StartupBox" Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center"
@@ -448,7 +463,7 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Style="{StaticResource CardTitle}" Text="テーマ"/>
-                                    <TextBlock Style="{StaticResource Note}" Text="設定画面と状態表示の配色。選んだ時点で反映し、「保存」は不要です"/>
+                                    <TextBlock Style="{StaticResource Note}" Text="設定画面と状態表示の配色"/>
                                     <TextBlock x:Name="ThemeResultText" Style="{StaticResource OptionalNote}" Foreground="{DynamicResource ErrorText}"/>
                                 </StackPanel>
                                 <ComboBox x:Name="ThemeBox" Grid.Column="1" MinWidth="180" Margin="12,0,0,0" VerticalAlignment="Center"
@@ -533,21 +548,5 @@
                 </ScrollViewer>
             </TabItem>
         </TabControl>
-
-        <!-- 保存バー。内容エリアの下に置き、どのタブからでも押せる -->
-        <Border Grid.Row="2" BorderBrush="{DynamicResource Stroke}" BorderThickness="0,1,0,0" Margin="208,0,24,0" Padding="0,14">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
-                    <TextBlock x:Name="DirtyText" Visibility="Collapsed" Text="未保存の変更があります" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource WarningText}"/>
-                    <TextBlock x:Name="SaveResultText" Style="{StaticResource OptionalNote}" Margin="0"/>
-                    <TextBlock Style="{StaticResource Note}" Margin="0" Text="プロファイルとマイクは「保存」で反映します。閉じると未保存の変更は破棄されます。"/>
-                </StackPanel>
-                <ui:Button x:Name="SaveButton" Grid.Column="1" Content="保存" Appearance="Primary" Padding="24,6" VerticalAlignment="Center" Click="OnSave"/>
-            </Grid>
-        </Border>
     </Grid>
 </ui:FluentWindow>
