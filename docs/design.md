@@ -13,6 +13,8 @@ tests/AnyDictation.E2E    実際の WPF アプリを操作する E2E（FlaUI.UIA
 
 Native と WPF に依存する判断は、できるだけ Core の純粋なロジックに寄せ、fake（`ICredentialStore`、`IDeliveryEnvironment`、`CaptureSession` へ流すデバイス通知）で検証する。
 
+設定画面は CommunityToolkit.Mvvm で ViewModel（`src/AnyDictation.Core/ViewModels`）へ順に移す。ViewModel は WPF に依存させず、確認や通知、クリップボードは `IUserDialogs` 経由で頼む。テストでは fake に替えて、画面を起動せずに検証する。今は履歴タブを移してある。
+
 ## 認識サービスとの通信
 
 認識は選択中のプロファイル 1 つにだけ送る。失敗しても別サービスへの fallback や自動 retry はしない。リダイレクトは追従しない（リダイレクト先へキーを送らないため）。

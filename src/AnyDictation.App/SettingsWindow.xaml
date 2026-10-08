@@ -3,6 +3,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Any Dictation 設定" Width="760" Height="580" MinWidth="680" MinHeight="480"
         WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -109,15 +112,15 @@
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <Border x:Name="HistoryCorruptBanner" Visibility="Collapsed" Background="#FFFDECEA"
+                    <Border x:Name="HistoryCorruptBanner" Visibility="{Binding IsCorrupt, Converter={StaticResource BoolToVisibility}}" Background="#FFFDECEA"
                             BorderBrush="#FFD32F2F" BorderThickness="1" Padding="8" Margin="0,0,0,8">
                         <StackPanel>
-                            <TextBlock x:Name="HistoryCorruptText" TextWrapping="Wrap" Foreground="#FFB71C1C"/>
+                            <TextBlock x:Name="HistoryCorruptText" Text="{Binding CorruptMessage}" TextWrapping="Wrap" Foreground="#FFB71C1C"/>
                             <Button Content="破損ファイルを別名へ退避して初期化" HorizontalAlignment="Left" Margin="0,6,0,0" Padding="10,3"
-                                    Click="OnQuarantineHistory"/>
+                                    Command="{Binding QuarantineCorruptFileCommand}"/>
                         </StackPanel>
                     </Border>
-                    <ListView x:Name="HistoryList" Grid.Row="1">
+                    <ListView x:Name="HistoryList" Grid.Row="1" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
                         <ListView.View>
                             <GridView>
                                 <GridViewColumn Header="日時" Width="140" DisplayMemberBinding="{Binding TimeText}"/>
@@ -127,8 +130,8 @@
                         </ListView.View>
                     </ListView>
                     <WrapPanel Grid.Row="2" Margin="0,8,0,0">
-                        <Button Content="選択した履歴をコピー" Padding="10,3" Margin="0,0,8,0" Click="OnCopyHistory"/>
-                        <Button Content="履歴をすべて削除" Padding="10,3" Margin="0,0,12,0" Click="OnClearHistory"/>
+                        <Button Content="選択した履歴をコピー" Padding="10,3" Margin="0,0,8,0" Command="{Binding CopySelectedCommand}"/>
+                        <Button Content="履歴をすべて削除" Padding="10,3" Margin="0,0,12,0" Command="{Binding ClearAllCommand}"/>
                         <TextBlock Text="直近 20 件の文章のみ保存します(音声は保存しません)。履歴の操作は保存を待たず、すぐ反映されます。" VerticalAlignment="Center" Foreground="Gray"/>
                     </WrapPanel>
                 </Grid>

@@ -4,23 +4,22 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using AnyDictation.ViewModels;
 
 namespace AnyDictation.App;
 
 internal enum SettingsTab { Profile, Microphone, History, General, Help }
 
 /// <summary>プロファイル(接続先とAPIキー)、マイク、履歴、一般、使い方の画面。閉じるとトレイへ隠れる。</summary>
-internal partial class SettingsWindow : Window
+internal partial class SettingsWindow : Window, IUserDialogs
 {
-    sealed record HistoryRow(string TimeText, string ProfileName, string Preview, string Full);
-
     readonly JsonFileStore<AppSettings> _settings;
-    readonly JsonFileStore<HistoryData> _historyStore;
-    readonly HistoryLog _history;
     readonly ICredentialStore _creds;
+    readonly HistoryViewModel _historyView;
     readonly DictationController _controller;
     readonly MicrophoneTester _microphoneTester = new();
     readonly DispatcherTimer _microphoneTick = new() { Interval = TimeSpan.FromMilliseconds(250) };
@@ -43,10 +42,10 @@ internal partial class SettingsWindow : Window
     {
         _settings = settings;
         _creds = creds;
-        _historyStore = historyStore;
-        _history = history;
         _controller = controller;
         InitializeComponent();
+        _historyView = new HistoryViewModel(history, historyStore, this);
+        HistoryTab.DataContext = _historyView;
         if (E2eMode.Enabled) ShowActivated = false;
         _microphoneTick.Tick += (_, _) => UpdateMicrophoneTest();
         _microphoneTester.Failed += (session, message) => Dispatcher.BeginInvoke(() =>
@@ -112,7 +111,7 @@ internal partial class SettingsWindow : Window
             SaveResultText.Text = "";
             RefreshBanners();
             RefreshProfileList(null);
-            RefreshHistory();
+            _historyView.Refresh();
             StartupBox.IsChecked = StartupRegistration.IsEnabled();
         }
         finally
@@ -154,9 +153,6 @@ internal partial class SettingsWindow : Window
         SettingsCorruptText.Text = $"設定ファイルを読み込めませんでした: {_settings.CorruptReason}\n" +
             $"ファイルは上書きせず保持しています({AppPaths.SettingsFile})。内容を確認するか、下のボタンで別名へ退避して初期化してください。退避するまで保存はできません。";
         SaveButton.IsEnabled = !_settings.IsCorrupt;
-        HistoryCorruptBanner.Visibility = _historyStore.IsCorrupt ? Visibility.Visible : Visibility.Collapsed;
-        HistoryCorruptText.Text = $"履歴ファイルを読み込めませんでした: {_historyStore.CorruptReason}\n" +
-            $"ファイルは上書きせず保持しています({AppPaths.HistoryFile})。退避するまで履歴は保存されません。";
     }
 
     void RefreshProfileList(Profile? select)
@@ -392,53 +388,19 @@ internal partial class SettingsWindow : Window
         Reload();
     }
 
-    // ---- 履歴 ----
+    // ---- 確認と通知(IUserDialogs) ----
 
-    public void RefreshHistory()
-    {
-        HistoryList.ItemsSource = _history.Entries
-            .Select(h => new HistoryRow(h.Time.ToString("yyyy-MM-dd HH:mm:ss"), h.ProfileName,
-                h.Text.Replace('\r', ' ').Replace('\n', ' ') is { Length: > 80 } t ? t[..80] + "…" : h.Text.Replace('\r', ' ').Replace('\n', ' '),
-                h.Text))
-            .ToList();
-        RefreshBanners();
-    }
+    bool IUserDialogs.Confirm(string message) =>
+        MessageBox.Show(this, message, "Any Dictation", MessageBoxButton.OKCancel, MessageBoxImage.Warning) == MessageBoxResult.OK;
 
-    async void OnCopyHistory(object s, RoutedEventArgs e)
-    {
-        if (E2eMode.Enabled) return;
-        if (HistoryList.SelectedItem is HistoryRow row && !await ClipboardHelper.SetTextAsync(row.Full))
-            MessageBox.Show(this, "クリップボードへ書き込めませんでした。", "Any Dictation");
-    }
+    void IUserDialogs.ShowMessage(string message) => MessageBox.Show(this, message, "Any Dictation");
 
-    void OnClearHistory(object s, RoutedEventArgs e)
-    {
-        if (MessageBox.Show(this, "履歴をすべて削除します。よろしいですか?", "Any Dictation",
-                MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
-        try
-        {
-            _history.Clear();
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or System.IO.IOException or UnauthorizedAccessException)
-        {
-            MessageBox.Show(this, "削除できませんでした: " + ex.Message, "Any Dictation", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        RefreshHistory();
-    }
+    void IUserDialogs.ShowError(string message) =>
+        MessageBox.Show(this, message, "Any Dictation", MessageBoxButton.OK, MessageBoxImage.Error);
 
-    void OnQuarantineHistory(object s, RoutedEventArgs e)
-    {
-        try
-        {
-            var moved = _historyStore.QuarantineCorruptFile();
-            MessageBox.Show(this, $"壊れた履歴ファイルを退避しました:\n{moved}", "Any Dictation");
-        }
-        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException)
-        {
-            MessageBox.Show(this, "退避できませんでした: " + ex.Message, "Any Dictation", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-        RefreshHistory();
-    }
+    // E2E ではクリップボードに触れず、失敗の通知も出さない
+    Task<bool> IUserDialogs.CopyToClipboardAsync(string text) =>
+        E2eMode.Enabled ? Task.FromResult(true) : ClipboardHelper.SetTextAsync(text);
 
     // ---- マイク ----
 
