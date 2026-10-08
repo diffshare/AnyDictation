@@ -1,0 +1,4 @@
+CredDelete
+CredFree
+CredRead
+CredWrite

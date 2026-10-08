@@ -91,12 +91,9 @@ internal sealed class TrayIcon : IDisposable
         }
         finally
         {
-            DestroyIcon(h);
+            Native.DestroyIcon(h);
         }
     }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    static extern bool DestroyIcon(IntPtr handle);
 
     public void Dispose()
     {

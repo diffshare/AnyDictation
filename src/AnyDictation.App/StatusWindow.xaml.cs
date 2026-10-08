@@ -43,8 +43,7 @@ internal partial class StatusWindow : Window
         SourceInitialized += (_, _) =>
         {
             var hwnd = new WindowInteropHelper(this).Handle;
-            Native.SetWindowLong(hwnd, Native.GWL_EXSTYLE,
-                Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE) | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW);
+            Native.MakeNoActivateToolWindow(hwnd);
         };
     }
 
