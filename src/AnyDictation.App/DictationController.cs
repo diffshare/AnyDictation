@@ -232,6 +232,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         }
         catch (Exception e) when (!_exiting)
         {
+            _recorder.Cancel(); // StopAsync より前の状態通知で失敗しても録音を解放する。
             tracker.Dispose();
             DropLive();
             Log.StopFailed(e.GetType().Name);

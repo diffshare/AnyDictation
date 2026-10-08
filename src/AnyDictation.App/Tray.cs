@@ -43,7 +43,8 @@ internal sealed class TrayIcon : IDisposable
 
     public void SetState(SessionState state)
     {
-        _icon.Icon = _icons[state];
+        // Icon の設定は旧値を破棄するため、キャッシュの所有権を保ったまま表示する。
+        _icon.UpdateIcon(_icons[state]);
         string text = state switch
         {
             SessionState.Recording => "録音中",
