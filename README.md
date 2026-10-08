@@ -66,6 +66,44 @@ API キーは Windows 資格情報マネージャーにだけ保存し、設定�
 - 画面下部に状態表示が出ます。録音中は「取消」、認識中は「中止」、失敗したときは「再送」と「破棄」のボタンがあります。状態表示は入力フォーカスを奪いません。
 - 失敗したときは音声をメモリに保持し、「再送」か「破棄」を選ぶまで次の録音はできません。音声はディスクに保存しません。
 
+### 状態表示
+
+録音から貼り付けまでの間、画面下部の中央に次のような表示が出ます。
+
+録音中は、経過時間、マイクの入力レベル、「取消」ボタンを表示します。
+
+![録音中](docs/images/status-recording.png)
+
+認識中は、使用中のプロファイル名と「中止」ボタンを表示します。
+
+![認識中](docs/images/status-recognizing.png)
+
+Live では、録音中と認識中に途中の文字と概算の費用も表示します。
+
+![Live の録音中](docs/images/status-recording-live.png)
+
+![Live の認識中](docs/images/status-recognizing-live.png)
+
+貼り付けに成功すると、短く表示して消えます。
+
+![貼り付けました](docs/images/status-pasted.png)
+
+途中で別のウィンドウへ移った場合などは、貼り付けずにクリップボードへコピーしたことを表示します。
+
+![クリップボードにコピーしました](docs/images/status-copied.png)
+
+マイクが無音だった場合は、送信せずに知らせます。
+
+![音声が検出されませんでした](docs/images/status-no-voice.png)
+
+認識に失敗した場合は、音声を保持したまま「再送」と「破棄」を表示します。
+
+![認識に失敗しました](docs/images/status-failed.png)
+
+録音中に Esc か「取消」で取り消した場合の表示です。
+
+![録音を取り消しました](docs/images/status-cancelled.png)
+
 ### Live（gpt-live-transcribe）の注意
 
 Live は録音中から音声を送信します。取消、中止、失敗の前に送った音声は取り消せず、その分の料金がかかります。失敗後の再送は音声全体を送り直します。プロファイルに単価（USD/分）を入力すると、状態表示に概算の費用を出します。
@@ -108,6 +146,15 @@ finally { Remove-Item Env:ANYDICTATION_RUN_E2E, Env:ANYDICTATION_E2E_EXE -ErrorA
 ```
 
 E2E は `TEMP/AnyDictation.E2E/<GUID>` に隔離した設定を使い、普段の設定、履歴、資格情報には触れません。`ANYDICTATION_E2E_SHOTS` に出力先を指定すると、各画面のスクリーンショットを保存します。
+
+README の状態表示の画像(`docs/images/status-*.png`)は、次のテストで作ります。状態表示をテストプロセス内で描くだけで、録音や通信はしません。
+
+```powershell
+$env:ANYDICTATION_RUN_E2E = '1'
+$env:ANYDICTATION_E2E_SHOTS = Join-Path $PWD 'docs/images'
+try { dotnet test tests/AnyDictation.E2E -c Release --no-build --filter "FullyQualifiedName~StatusWindowShotTests" }
+finally { Remove-Item Env:ANYDICTATION_RUN_E2E, Env:ANYDICTATION_E2E_SHOTS -ErrorAction SilentlyContinue }
+```
 
 内部設計、通信の形、テストの範囲、実フックの E2E の実行方法は [docs/design.md](docs/design.md) にあります。
 
