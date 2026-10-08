@@ -83,6 +83,9 @@ public static class ProfileValidator
     }
 }
 
+/// <summary>画面の配色。System は Windows のライト / ダークに合わせる。</summary>
+public enum ThemePreference { System, Light, Dark }
+
 public sealed class AppSettings
 {
     public const int CurrentVersion = 1;
@@ -90,13 +93,25 @@ public sealed class AppSettings
     public int Version { get; set; } = CurrentVersion;
     public Guid? ActiveProfileId { get; set; }
     public string? MicrophoneDeviceId { get; set; } // null は Windows の既定入力
+    public ThemePreference Theme { get; set; } // 項目のない既存の設定ファイルは System として読む
     public List<Profile> Profiles { get; set; } = new();
 
     public Profile? ActiveProfile => Profiles.FirstOrDefault(p => p.Id == ActiveProfileId);
 
+    /// <summary>テーマだけを差し替えた複製。テーマは選んだ時点で保存するため、編集中の下書きではなく保存済みの設定から作る。</summary>
+    public AppSettings WithTheme(ThemePreference theme) => new()
+    {
+        Version = Version,
+        ActiveProfileId = ActiveProfileId,
+        MicrophoneDeviceId = MicrophoneDeviceId,
+        Theme = theme,
+        Profiles = Profiles.Select(p => p.Clone()).ToList(),
+    };
+
     public static List<string> Validate(AppSettings s)
     {
         var errors = new List<string>();
+        if (!Enum.IsDefined(s.Theme)) errors.Add("テーマの値が不正です。");
         if (s.MicrophoneDeviceId != null && (string.IsNullOrWhiteSpace(s.MicrophoneDeviceId) || s.MicrophoneDeviceId.Length > 32768))
             errors.Add("マイクの識別情報が不正です。");
         if (s.Version != CurrentVersion) errors.Add($"設定ファイルのバージョン {s.Version} には対応していません。");

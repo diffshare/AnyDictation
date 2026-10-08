@@ -97,7 +97,7 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
         {
             run.Start();
             run.SelectName("履歴");
-            Assert.Empty(run.Element("HistoryList").FindAllChildren(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.DataItem)));
+            Assert.Empty(run.Element("HistoryList").FindAllChildren(cf => cf.ByControlType(FlaUI.Core.Definitions.ControlType.ListItem)));
             run.SelectName("一般");
             Assert.Contains("まだ Live", run.Element("LastLiveCostText").Name);
             Assert.False(run.Element("StartupBox").IsEnabled);
@@ -127,7 +127,7 @@ public sealed class SettingsGuiTests(ITestOutputHelper output)
                 ("プロファイル", ["NameBox", "ProviderBox", "EndpointBox", "ModelBox", "LanguageBox", "LiveRateBox", "KeyBox", "UseButton"]),
                 ("マイク", ["MicrophoneBox", "MicrophoneStopButton"]),
                 ("履歴", ["HistoryList"]),
-                ("一般", ["StartupBox", "PathText", "UpdateText"]),
+                ("一般", ["StartupBox", "ThemeBox", "PathText", "UpdateText"]),
                 ("使い方", []),
             };
             foreach (var size in new[] { "default", "min" })

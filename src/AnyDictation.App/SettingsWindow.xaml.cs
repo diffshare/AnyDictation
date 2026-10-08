@@ -15,9 +15,22 @@ namespace AnyDictation.App;
 
 internal enum SettingsTab { Profile, Microphone, History, General, Help }
 
+/// <summary>プロファイル一覧の 1 行。IsActive は保存後に使うプロファイル(編集中の使用先)。</summary>
+internal sealed record ProfileRow(Profile Profile, string Name, string Summary, bool IsActive);
+
 /// <summary>プロファイル(接続先とAPIキー)、マイク、履歴、一般、使い方の画面。閉じるとトレイへ隠れる。</summary>
-internal partial class SettingsWindow : Window, IUserDialogs
+internal partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow, IUserDialogs
 {
+    static readonly KeyValuePair<string, string>[] Shortcuts =
+    [
+        new("Ctrl + Win", "押して離すと録音開始。もう一度で停止して文字起こし"),
+        new("Ctrl + Win 長押し", "0.5 秒以上押している間だけ録音"),
+        new("Esc", "録音中に押すと取り消し"),
+        new("Enter", "録音中に押すと停止して文字起こし。貼り付け成功時のみ Enter も送る"),
+        new("Shift + Alt + Z", "履歴の直近の結果をもう一度貼り付け"),
+        new("最大 5 分", "録音は 5 分で自動的に停止"),
+    ];
+
     readonly JsonFileStore<AppSettings> _settings;
     readonly ICredentialStore _creds;
     readonly HistoryViewModel _historyView;
@@ -57,6 +70,10 @@ internal partial class SettingsWindow : Window, IUserDialogs
         ProviderBox.Items.Add(new ComboBoxItem { Content = "OpenAI / OpenAI 互換", Tag = ProviderKind.OpenAiCompatible });
         ProviderBox.Items.Add(new ComboBoxItem { Content = "Azure OpenAI", Tag = ProviderKind.AzureOpenAi });
         ProviderBox.Items.Add(new ComboBoxItem { Content = "Azure OpenAI Live(録音中に送信)", Tag = ProviderKind.AzureOpenAiLive });
+        ShortcutList.ItemsSource = Shortcuts;
+        ThemeBox.Items.Add(new ComboBoxItem { Content = "Windows に合わせる", Tag = ThemePreference.System });
+        ThemeBox.Items.Add(new ComboBoxItem { Content = "ライト", Tag = ThemePreference.Light });
+        ThemeBox.Items.Add(new ComboBoxItem { Content = "ダーク", Tag = ThemePreference.Dark });
         PathText.Text = $"設定: {AppPaths.SettingsFile}\n履歴: {AppPaths.HistoryFile}\nログ: {AppPaths.LogFile}\n(APIキーは Windows 資格情報マネージャーの「AnyDictation/credential/…」に保存されます)";
         Reload();
         if (E2eMode.Enabled)
@@ -114,6 +131,7 @@ internal partial class SettingsWindow : Window, IUserDialogs
             RefreshProfileList(null);
             _historyView.Refresh();
             StartupBox.IsChecked = StartupRegistration.IsEnabled();
+            ThemeBox.SelectedItem = ThemeBox.Items.Cast<ComboBoxItem>().First(i => (ThemePreference)i.Tag == _settings.Value.Theme);
         }
         finally
         {
@@ -153,25 +171,37 @@ internal partial class SettingsWindow : Window, IUserDialogs
         SettingsCorruptBanner.Visibility = _settings.IsCorrupt ? Visibility.Visible : Visibility.Collapsed;
         SettingsCorruptText.Text = $"設定ファイルを読み込めませんでした: {_settings.CorruptReason}\n" +
             $"ファイルは上書きせず保持しています({AppPaths.SettingsFile})。内容を確認するか、下のボタンで別名へ退避して初期化してください。退避するまで保存はできません。";
-        SaveButton.IsEnabled = !_settings.IsCorrupt;
+        SaveButton.IsEnabled = ThemeBox.IsEnabled = !_settings.IsCorrupt; // 壊れたファイルは上書きしない
     }
 
     void RefreshProfileList(Profile? select)
     {
         bool was = _loading;
         _loading = true;
-        ProfileList.Items.Clear();
-        foreach (var p in _draft)
-            ProfileList.Items.Add(new ListBoxItem { Content = (p.Id == _draftActive ? "● " : "　") + p.Name, Tag = p });
+        ProfileList.ItemsSource = _draft.Select(p => new ProfileRow(p, p.Name, Summarize(p), p.Id == _draftActive)).ToList();
         _loading = was;
         SelectInList(select);
     }
+
+    /// <summary>一覧の 2 行目。「モデル · 言語 · サービス」</summary>
+    static string Summarize(Profile p) => string.Join(" · ", new[]
+    {
+        p.Model,
+        p.Language.Length > 0 ? p.Language : "言語自動",
+        p.Provider switch
+        {
+            ProviderKind.AzureMai => "Azure Speech",
+            ProviderKind.OpenAiCompatible => "OpenAI 互換",
+            ProviderKind.AzureOpenAi => "Azure OpenAI",
+            _ => "Azure OpenAI Live · 録音中から送信",
+        },
+    }.Where(s => s.Length > 0));
 
     void SelectInList(Profile? p)
     {
         bool was = _loading;
         _loading = true;
-        ProfileList.SelectedItem = ProfileList.Items.Cast<ListBoxItem>().FirstOrDefault(i => i.Tag == p);
+        ProfileList.SelectedItem = ProfileList.Items.Cast<ProfileRow>().FirstOrDefault(r => r.Profile == p);
         _loading = was;
     }
 
@@ -181,7 +211,7 @@ internal partial class SettingsWindow : Window, IUserDialogs
     {
         if (_loading) return;
         CommitForm();
-        var selected = (ProfileList.SelectedItem as ListBoxItem)?.Tag as Profile;
+        var selected = (ProfileList.SelectedItem as ProfileRow)?.Profile;
         ShowProfile(selected);
     }
 
@@ -230,8 +260,7 @@ internal partial class SettingsWindow : Window, IUserDialogs
         string afterText = Describe(_draftActive, _draft);
         bool changed = saved != _draftActive;
         ActiveText.Text = $"現在の使用先(保存済み): {savedText}\n保存後の使用先: {afterText}" + (changed ? "" : "(変更なし)");
-        ActiveText.Foreground = changed ? System.Windows.Media.Brushes.DarkOrange
-            : _draftActive == _current.Id ? System.Windows.Media.Brushes.DarkGreen : System.Windows.Media.Brushes.Gray;
+        ActiveText.SetResourceReference(ForegroundProperty, changed ? "WarningText" : _draftActive == _current.Id ? "SuccessText" : "TextSecondary");
         UseButton.IsEnabled = _draftActive != _current.Id;
     }
 
@@ -291,8 +320,10 @@ internal partial class SettingsWindow : Window, IUserDialogs
 
     void OnProviderChanged(object s, SelectionChangedEventArgs e)
     {
-        var visibility = ProviderBox.SelectedItem is ComboBoxItem { Tag: ProviderKind.AzureOpenAiLive } ? Visibility.Visible : Visibility.Collapsed;
+        var kind = (ProviderBox.SelectedItem as ComboBoxItem)?.Tag as ProviderKind?;
+        var visibility = kind == ProviderKind.AzureOpenAiLive ? Visibility.Visible : Visibility.Collapsed;
         LiveNote.Visibility = LiveCostForm.Visibility = visibility;
+        ModelLabel.Text = kind is ProviderKind.AzureOpenAi or ProviderKind.AzureOpenAiLive ? "デプロイ名" : "モデル";
         UpdateEndpointPlaceholder();
         MarkDirty();
     }
@@ -339,22 +370,24 @@ internal partial class SettingsWindow : Window, IUserDialogs
     {
         StopMicrophoneTest();
         CommitForm();
-        var candidate = new AppSettings { Profiles = _draft, ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId };
+        // テーマは選んだ時点で保存済み。下書きにはないため、保存済みの値を引き継ぐ
+        var theme = _settings.Value.Theme;
+        var candidate = new AppSettings { Profiles = _draft, ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId, Theme = theme };
         var errors = AppSettings.Validate(candidate);
         if (errors.Count > 0)
         {
-            SaveResultText.Foreground = System.Windows.Media.Brushes.Firebrick;
+            SaveResultText.SetResourceReference(ForegroundProperty, "ErrorText");
             SaveResultText.Text = string.Join("\n", errors);
             return;
         }
         // 候補は複製を渡す。キーは新しい資格情報 ID へ書かれ、JSON の保存成功で参照が切り替わる。
         // 失敗しても設定と各プロファイルのキーは保存前の組のまま(入力中の内容はこの画面に残る)
-        var committed = new AppSettings { Profiles = _draft.Select(p => p.Clone()).ToList(), ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId };
+        var committed = new AppSettings { Profiles = _draft.Select(p => p.Clone()).ToList(), ActiveProfileId = _draftActive, MicrophoneDeviceId = _draftMicrophoneId, Theme = theme };
         var result = SettingsCommit.Commit(_settings, _creds, committed, _newKeys, _keyDeletes);
         if (result.Status == SaveStatus.Failed)
         {
             Log.SettingsSaveFailed();
-            SaveResultText.Foreground = System.Windows.Media.Brushes.Firebrick;
+            SaveResultText.SetResourceReference(ForegroundProperty, "ErrorText");
             SaveResultText.Text = result.Message;
             return;
         }
@@ -369,7 +402,7 @@ internal partial class SettingsWindow : Window, IUserDialogs
             RefreshProfileList(again);
             ShowProfile(again);
         }
-        SaveResultText.Foreground = result.Status == SaveStatus.Saved ? System.Windows.Media.Brushes.DarkGreen : System.Windows.Media.Brushes.DarkOrange;
+        SaveResultText.SetResourceReference(ForegroundProperty, result.Status == SaveStatus.Saved ? "SuccessText" : "WarningText");
         SaveResultText.Text = result.Status == SaveStatus.Saved && _draftActive == null && _draft.Count > 0
             ? "保存しました。ただし使用するプロファイルが選択されていません。"
             : result.Message;
@@ -488,7 +521,8 @@ internal partial class SettingsWindow : Window, IUserDialogs
             return;
         }
         int? peak = _microphoneTester.ReadPeak();
-        MicrophoneLevel.Value = peak is { } p ? Math.Sqrt(p / 32768d) * 100 : 0;
+        MicrophoneLevel.Push(peak is { } p ? Math.Sqrt(p / 32768d) : 0);
+        MicrophoneDbText.Text = peak is > 0 ? $"{20 * Math.Log10(peak.Value / 32768d):0} dB" : "– dB";
         string state = peak == null ? "マイクの入力待ち" : peak >= SilenceDetector.DefaultThreshold ? "入力あり" : peak > 0 ? "入力が小さい" : "無音";
         MicrophoneTestText.Text = $"{state}（あと {Math.Ceiling(15 - elapsed.TotalSeconds):0} 秒）";
     }
@@ -504,12 +538,42 @@ internal partial class SettingsWindow : Window, IUserDialogs
             _controller.EndMicrophoneTest();
             MicrophoneStartButton.IsEnabled = !E2eMode.Enabled;
             MicrophoneStopButton.IsEnabled = false;
-            MicrophoneLevel.Value = 0;
+            MicrophoneLevel.Clear();
+            MicrophoneDbText.Text = "– dB";
             MicrophoneTestText.Text = message;
         }
     }
 
+    // ---- 履歴 ----
+
+    /// <summary>行の「コピー」。その行を選んでから、既存の「選択した履歴をコピー」と同じ処理をする。</summary>
+    void OnCopyHistoryRow(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not HistoryRow row) return;
+        _historyView.SelectedRow = row;
+        _historyView.CopySelectedCommand.Execute(null);
+    }
+
     // ---- 一般 ----
+
+    /// <summary>テーマは選んだ時点で反映して保存する(「保存」は不要)。保存するのは保存済みの設定のテーマだけで、編集中の下書きは含めない。</summary>
+    void OnThemeSelected(object s, SelectionChangedEventArgs e)
+    {
+        if (_loading || ThemeBox.SelectedItem is not ComboBoxItem { Tag: ThemePreference theme } || theme == _settings.Value.Theme) return;
+        try
+        {
+            _settings.Save(_settings.Value.WithTheme(theme));
+            ThemeResultText.Text = "";
+            AppTheme.Apply(theme);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            _loading = true;
+            ThemeBox.SelectedItem = ThemeBox.Items.Cast<ComboBoxItem>().First(i => (ThemePreference)i.Tag == _settings.Value.Theme);
+            _loading = false;
+            ThemeResultText.Text = "テーマを保存できませんでした: " + ex.Message;
+        }
+    }
 
     void OnStartupClicked(object s, RoutedEventArgs e)
     {
