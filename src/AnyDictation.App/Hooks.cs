@@ -7,6 +7,7 @@ using Windows.Win32.Foundation;
 using Windows.Win32.UI.Accessibility;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -94,7 +95,7 @@ internal sealed class KeyboardHook : IDisposable
             _threadId = PInvoke.GetCurrentThreadId();
             // 他のアプリが先に登録していれば失敗する。その場合も録音の操作は使えるので、ログだけ残す
             if (_repasteHotkey && !PInvoke.RegisterHotKey(HWND.Null, RepasteHotkeyId, HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_SHIFT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkZ))
-                Log.Write($"repaste hotkey not registered win32={Marshal.GetLastWin32Error()}");
+                Log.RepasteHotkeyNotRegistered(Marshal.GetLastWin32Error());
         }
         catch (Exception e)
         {
@@ -107,7 +108,7 @@ internal sealed class KeyboardHook : IDisposable
         {
             ready.Set();
         }
-        Log.Write("keyboard hook started");
+        Log.KeyboardHookStarted();
         try
         {
             while (PInvoke.GetMessage(out var msg, HWND.Null, 0, 0).Value > 0)
@@ -131,7 +132,7 @@ internal sealed class KeyboardHook : IDisposable
             if (_repasteHotkey) PInvoke.UnregisterHotKey(HWND.Null, RepasteHotkeyId);
             StopHoldTimer();
             Unhook();
-            Log.Write("keyboard hook stopped");
+            Log.KeyboardHookStopped();
         }
     }
 
@@ -163,7 +164,7 @@ internal sealed class KeyboardHook : IDisposable
     {
         uint id = _threadId;
         if (id != 0 && !PInvoke.PostThreadMessage(id, ResetMessage, default, default))
-            Log.Write($"keyboard hook reset not delivered win32={Marshal.GetLastWin32Error()}");
+            Log.KeyboardHookResetNotDelivered(Marshal.GetLastWin32Error());
     }
 
     unsafe LRESULT Callback(int nCode, WPARAM wParam, LPARAM lParam)
@@ -210,9 +211,9 @@ internal sealed class KeyboardHook : IDisposable
         _threadId = 0;
         if (id == 0) return;
         if (!PInvoke.PostThreadMessage(id, PInvoke.WM_QUIT, default, default))
-            Log.Write($"keyboard hook stop not delivered win32={Marshal.GetLastWin32Error()}");
+            Log.KeyboardHookStopNotDelivered(Marshal.GetLastWin32Error());
         else if (!thread.Join(TimeSpan.FromSeconds(2)))
-            Log.Write("keyboard hook did not stop within 2s");
+            Log.KeyboardHookDidNotStop();
     }
 }
 
@@ -234,7 +235,7 @@ internal sealed class ForegroundTracker : IDisposable
         _proc = OnForeground;
         _hook = PInvoke.SetWinEventHook(PInvoke.EVENT_SYSTEM_FOREGROUND, PInvoke.EVENT_SYSTEM_FOREGROUND,
             HMODULE.Null, _proc, 0, 0, PInvoke.WINEVENT_OUTOFCONTEXT);
-        if (_hook.IsNull) Log.Write("foreground tracker hook failed");
+        if (_hook.IsNull) Log.ForegroundTrackerHookFailed();
     }
 
     unsafe void OnForeground(HWINEVENTHOOK hook, uint evt, HWND hwnd, int idObject, int idChild, uint thread, uint time)

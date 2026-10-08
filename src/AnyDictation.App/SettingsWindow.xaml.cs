@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
 using AnyDictation.ViewModels;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -352,12 +353,12 @@ internal partial class SettingsWindow : Window, IUserDialogs
         var result = SettingsCommit.Commit(_settings, _creds, committed, _newKeys, _keyDeletes);
         if (result.Status == SaveStatus.Failed)
         {
-            Log.Write("settings save failed");
+            Log.SettingsSaveFailed();
             SaveResultText.Foreground = System.Windows.Media.Brushes.Firebrick;
             SaveResultText.Text = result.Message;
             return;
         }
-        if (result.Status == SaveStatus.SavedWithLeftovers) Log.Write("settings saved; obsolete credentials left");
+        if (result.Status == SaveStatus.SavedWithLeftovers) Log.SettingsSavedWithLeftovers();
 
         // 保存済みの内容(新しい資格情報 ID を含む)から画面を読み直し、編集中のプロファイルを選び直す
         var curId = _current?.Id;

@@ -71,6 +71,14 @@ Native と WPF に依存する判断は、できるだけ Core の純粋なロ�
 - 前面ウィンドウの監視（`SetWinEventHook`）を開始できない場合、権限を判定する API が失敗した場合、貼り付け先が管理者権限の場合は、コピーだけにして理由を表示する。判定の失敗を「昇格していない」とは扱わない。
 - 認識が成功した後の貼り付けの失敗は、API の再送状態にしない（課金の重複を防ぐため）。
 
+### 診断ログ
+
+- ログ（`%LOCALAPPDATA%\AnyDictation\log.txt`）に出す内容は、`[LoggerMessage]` のソース生成で一覧に定義したものだけにする。アプリは `src/AnyDictation.App/LogMessages.cs`、Core（Live の通信）は `src/AnyDictation.Core/LogMessages.cs` に置く。任意の文字列を書く入口は設けない。
+- 各メソッドの引数は、状態・種別・件数・長さ・時間・例外の型名に限る。認識結果の本文・APIキー・音声・サービスが返す文字列は受け取らない。レビューでは、この 2 つのファイルの引数を見れば、ログに何が出うるかを確かめられる。
+- 書き込み先の `AppLog` は、渡された `Exception` を書かない（メッセージやスタックに本文が入りうるため）。
+- `LogInformation` などの直接呼び出しは、`.editorconfig` で CA1848 をエラーにしてビルドで止める。
+- Core は `Microsoft.Extensions.Logging.Abstractions` の `ILogger` だけに依存し、テストではキューへ積む `ILogger` に替えて、ログに秘密が出ないことを確かめる。
+
 ## 配布と更新
 
 - インストール版は Velopack で作る。per-user で管理者権限が要らず、通常のデスクトップアプリのまま低レベルフック、`SendInput`、HKCU Run の自動起動を使えるため。MSIX は更新で実行パスが変わり、Run キーも仮想化されるので使わない。

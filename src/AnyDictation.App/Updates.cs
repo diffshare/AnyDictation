@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Windows.Threading;
 using Velopack;
 using Velopack.Sources;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -40,7 +41,7 @@ internal sealed class AppUpdater
         if (restarted) return false;
         var manager = CreateManager();
         if (!manager.IsInstalled || manager.UpdatePendingRestart is not { } pending) return false;
-        Log.Write($"update apply on startup version={pending.Version}");
+        Log.UpdateApplyOnStartup(pending.Version.ToString());
         try
         {
             manager.WaitExitThenApplyUpdates(pending, silent: true, restart: true);
@@ -49,7 +50,7 @@ internal sealed class AppUpdater
         catch (Exception ex)
         {
             // 更新プログラムを起動できなくても、今の版で起動を続ける
-            Log.Write($"update apply failed {ex.GetType().Name}");
+            Log.UpdateApplyFailed(ex.GetType().Name);
             return false;
         }
     }
@@ -82,7 +83,7 @@ internal sealed class AppUpdater
             _download = _manager.DownloadUpdatesAsync(info, cancelToken: _cts.Token);
             await _download;
             Pending = info.TargetFullRelease;
-            Log.Write($"update downloaded version={Pending.Version}");
+            Log.UpdateDownloaded(Pending.Version.ToString());
             PendingChanged?.Invoke();
         }
         catch (OperationCanceledException) when (_cts.IsCancellationRequested)
@@ -92,7 +93,7 @@ internal sealed class AppUpdater
         catch (Exception ex)
         {
             // 通信の失敗などは次回の確認で再試行する。利用者には通知しない
-            Log.Write($"update check failed {ex.GetType().Name}");
+            Log.UpdateCheckFailed(ex.GetType().Name);
         }
     }
 
@@ -120,7 +121,7 @@ internal sealed class AppUpdater
     public void ApplyOnExit(bool restart)
     {
         if (Pending == null) return;
-        Log.Write($"update apply on exit version={Pending.Version} restart={restart}");
+        Log.UpdateApplyOnExit(Pending.Version.ToString(), restart);
         try
         {
             _manager.WaitExitThenApplyUpdates(Pending, silent: true, restart);
@@ -128,7 +129,7 @@ internal sealed class AppUpdater
         catch (Exception ex)
         {
             // 適用できなくても終了は続ける。次回の起動時に再び適用を試みる
-            Log.Write($"update apply failed {ex.GetType().Name}");
+            Log.UpdateApplyFailed(ex.GetType().Name);
         }
     }
 }

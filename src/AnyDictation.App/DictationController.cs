@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
 using Windows.Win32;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -145,7 +146,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         try
         {
             var result = await ResultDelivery.RunAsync(this, _history.Entries[0].Text, userAborted: false);
-            Log.Write($"repaste outcome={result.Outcome} reason={result.Decision.Reason}");
+            Log.Repasted(result.Outcome, result.Decision.Reason);
             if (_exiting || result.Outcome == DeliveryOutcome.ExitingSkipped) return;
             NotifyDelivery(result, "");
         }
@@ -163,26 +164,26 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _inputMeterLogged = false;
         _microphoneReady = false;
         _startupNote = "";
-        trace.Mark("requested");
+        trace.Mark(RecordingStartStage.requested);
         // 録音開始前の確認だけ(キーは送信時に取得し直す)
         if (!SendPreflight.TryResolve(_settings, _creds, out var target, out var problem))
         {
-            trace.Mark("preflight_failed");
+            trace.Mark(RecordingStartStage.preflight_failed);
             Notify(StatusKind.Failed, "録音を開始できません", problem, TimeSpan.FromSeconds(8), canClose: true);
             SettingsRequested?.Invoke();
             return;
         }
-        trace.Mark("preflight_completed");
+        trace.Mark(RecordingStartStage.preflight_completed);
         LiveTranscriptionSession? live = null;
         if (target!.Profile.Provider == ProviderKind.AzureOpenAiLive)
         {
             try
             {
-                live = new LiveTranscriptionSession(target.Profile, target.ApiKey, log: Log.Write);
+                live = new LiveTranscriptionSession(target.Profile, target.ApiKey, logger: Log);
             }
             catch (TranscriptionException e)
             {
-                trace.Mark("live_setup_failed");
+                trace.Mark(RecordingStartStage.live_setup_failed);
                 Notify(StatusKind.Failed, "録音を開始できません", e.Message, TimeSpan.FromSeconds(8), canClose: true);
                 SettingsRequested?.Invoke();
                 return;
@@ -198,8 +199,8 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         catch (Exception e)
         {
             live?.Cancel();
-            trace.Mark("microphone_start_failed");
-            Log.Write($"recorder start failed: {e.GetType().Name} {e.Message}");
+            trace.Mark(RecordingStartStage.microphone_start_failed);
+            Log.RecorderStartFailed(e.GetType().Name, e.Message);
             Notify(StatusKind.Failed, "マイクを開始できません",
                 e.Message + "\n設定でマイクを選び直すか、Windows のマイク権限を確認してください。",
                 TimeSpan.FromSeconds(10), canClose: true);
@@ -210,10 +211,10 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _recordingId++;
         if (live != null) AttachLive(live);
         _tick.Start(); // 開始音は最初の音声が届いてから鳴らす(OnMicrophoneReady)
-        Log.Write($"recording started profile={target!.Profile.Name}");
+        Log.RecordingStarted(target!.Profile.Name);
         RaiseState();
         OnTick();
-        trace.Mark("status_ui_updated");
+        trace.Mark(RecordingStartStage.status_ui_updated);
     }
 
     async Task StopAndRecognizeAsync(bool auto, bool pressEnter = false)
@@ -233,7 +234,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         {
             tracker.Dispose();
             DropLive();
-            Log.Write($"stop failed: {e.GetType().Name}");
+            Log.StopFailed(e.GetType().Name);
             if (_state.State == SessionState.Recognizing) _state.AbortRecognition();
             RaiseState();
             Notify(StatusKind.Failed, "録音の終了処理に失敗しました", $"{e.GetType().Name}。音声は破棄しました。", TimeSpan.FromSeconds(10), canClose: true);
@@ -249,7 +250,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             Array.Clear(result.Wav);
             return;
         }
-        Log.Write($"recording stopped auto={auto} silent={result.Silent} warning={result.Warning != null} bytes={result.Wav.Length}");
+        Log.RecordingStopped(auto, result.Silent, result.Warning != null, result.Wav.Length);
 
         if (result.Silent)
         {
@@ -292,7 +293,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         RecordingSounds.Stopped();
         bool wasLive = _live != null;
         DropLive(); // 保持した音声は、再送で新しいセッションへ全部送り直す
-        Log.Write($"recorder interrupted silent={result.Silent} bytes={result.Wav.Length} live={wasLive}");
+        Log.RecorderInterrupted(result.Silent, result.Wav.Length, wasLive);
         if (result.Silent)
         {
             _state.CancelRecording();
@@ -320,10 +321,10 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         if (_state.State != SessionState.Recording || !_recorder.IsCurrent(session)) return;
         _microphoneReady = true;
         if (_startupNotice.Take(startup) is { } note) _startupNote = "\n" + note;
-        Log.Write(FormattableString.Invariant($"microphone ready startup_ms={startup.TotalMilliseconds:F0} noticed={_startupNote.Length > 0}"));
-        _startTrace?.Mark("sound_play_requested");
+        Log.MicrophoneReady(startup.TotalMilliseconds, _startupNote.Length > 0);
+        _startTrace?.Mark(RecordingStartStage.sound_play_requested);
         RecordingSounds.Started();
-        _startTrace?.Mark("sound_play_call_returned");
+        _startTrace?.Mark(RecordingStartStage.sound_play_call_returned);
         OnTick();
     }
 
@@ -347,7 +348,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     {
         // キューに積まれている間に停止・取消・新しい録音があった場合は無視する
         if (_state.State != SessionState.Recording || !ReferenceEquals(_live, live)) return;
-        Log.Write("live failed while recording; stopping the recording");
+        Log.LiveFailedWhileRecording();
         _ = StopAndRecognizeAsync(auto: false);
     }
 
@@ -402,7 +403,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _delivering = false;
         _recognitionNote = note;
         Notify(StatusKind.Recognizing, $"認識中… ({profile.Name})", note, canAbort: true, live: live?.GetPartialTail(MaxLiveChars));
-        Log.Write($"recognition started provider={profile.Provider} model={profile.Model}");
+        Log.RecognitionStarted(profile.Provider, profile.Model);
         string text;
         try
         {
@@ -428,13 +429,13 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         }
         catch (TranscriptionException e)
         {
-            Log.Write($"recognition failed kind={e.Kind}");
+            Log.RecognitionFailed(e.Kind);
             FailRecognition(usedLive ? "Live 通信が失敗したため、録音は停止しました。" + e.Message + "\n再送すると保持した音声全体を新しい Live セッションで送ります(追加課金)。" : e.Message);
             return;
         }
         catch (Exception e)
         {
-            Log.Write($"recognition failed unexpected={e.GetType().Name}");
+            Log.RecognitionFailedUnexpected(e.GetType().Name);
             FailRecognition($"想定外のエラーが発生しました({e.GetType().Name})。再送できます。");
             return;
         }
@@ -447,7 +448,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
 
         // 通信は完了した。これ以降は「中止」を受け付けず、中止が先に押されていたかだけを見る
         _delivering = true;
-        Log.Write("recognition succeeded");
+        Log.RecognitionSucceeded();
         await DeliverAsync(text, profile.Name, _userAborted, pressEnter);
     }
 
@@ -467,7 +468,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         }
         try
         {
-            live = new LiveTranscriptionSession(send.Profile, send.ApiKey, log: Log.Write);
+            live = new LiveTranscriptionSession(send.Profile, send.ApiKey, logger: Log);
         }
         catch (TranscriptionException e)
         {
@@ -490,7 +491,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     {
         if (_job == null || !_state.Retry()) return;
         RaiseState();
-        Log.Write("retry requested");
+        Log.RetryRequested();
         await RunRecognitionAsync("");
     }
 
@@ -499,7 +500,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         if (!_state.Discard()) return;
         DisposeJob();
         RaiseState();
-        Log.Write("pending audio discarded");
+        Log.PendingAudioDiscarded();
         Notify(StatusKind.Idle, "音声を破棄しました", "", TimeSpan.FromSeconds(3));
     }
 
@@ -521,7 +522,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         }
         catch (Exception e)
         {
-            Log.Write($"history save failed: {e.GetType().Name}");
+            Log.HistorySaveFailed(e.GetType().Name);
             historyNote = "(履歴は保存できませんでした)";
         }
 
@@ -530,7 +531,8 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
                 abortedFirst ? "中止の操作より先に認識が完了していました。貼り付けずに結果を保存します。" : "結果を貼り付ける準備をしています(この間は中止できません)。");
 
         var result = await ResultDelivery.RunAsync(this, text, abortedFirst, pressEnter);
-        Log.Write($"delivery outcome={result.Outcome} reason={result.Decision.Reason} enter={(pressEnter ? result.EnterSent.ToString() : "-")}");
+        if (pressEnter) Log.DeliveredWithEnter(result.Outcome, result.Decision.Reason, result.EnterSent);
+        else Log.Delivered(result.Outcome, result.Decision.Reason);
 
         _state.RecognitionSucceeded();
         DisposeJob();
@@ -618,7 +620,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         _recorder.Cancel();
         RecordingSounds.Stopped();
         RaiseState();
-        Log.Write($"recording cancelled live={wasLive}");
+        Log.RecordingCancelled(wasLive);
         Notify(StatusKind.Idle, "録音を取り消しました",
             wasLive ? "接続を閉じ、保持していた音声は破棄しました。取消の前に Live へ送信済みの音声は取り消せません。" : "音声は送信せず破棄しました。",
             TimeSpan.FromSeconds(wasLive ? 6 : 3), escDismissible: true);
@@ -645,7 +647,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         if (!_inputMeterLogged && peak != null)
         {
             _inputMeterLogged = true;
-            _startTrace?.Mark("first_input_meter_updated");
+            _startTrace?.Mark(RecordingStartStage.first_input_meter_updated);
         }
     }
 

@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using Velopack;
+using static AnyDictation.App.AppLog;
 
 namespace AnyDictation.App;
 
@@ -74,7 +75,7 @@ internal sealed class AnyApp : Application
         _historyStore = new JsonFileStore<HistoryData>(AppPaths.HistoryFile, HistoryData.Validate);
         _historyStore.Load();
         var history = new HistoryLog(_historyStore);
-        Log.Write($"startup settingsCorrupt={_settings.IsCorrupt} historyCorrupt={_historyStore.IsCorrupt}");
+        Log.Startup(_settings.IsCorrupt, _historyStore.IsCorrupt);
 
         ICredentialStore creds = E2eMode.Enabled ? new E2eCredentials() : new WindowsCredentialStore();
         _status = new StatusWindow();
@@ -91,7 +92,7 @@ internal sealed class AnyApp : Application
         _tray = new TrayIcon(
             openSettings: () => _settingsWindow.Open(SettingsTab.Profile),
             openHistory: () => _settingsWindow.Open(SettingsTab.History),
-            toggle: () => RequestToggle("tray"),
+            toggle: () => RequestToggle(),
             restartToUpdate: RestartToUpdate,
             exit: () => RequestExit(restart: false));
 
@@ -118,7 +119,7 @@ internal sealed class AnyApp : Application
         }
         catch (InvalidOperationException ex)
         {
-            Log.Write("hook install failed");
+            Log.HookInstallFailed();
             MessageBox.Show(ex.Message + "\nトレイのメニューからは録音を開始できます。", "Any Dictation", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         SystemEvents.SessionSwitch += OnSessionSwitch;
@@ -136,13 +137,13 @@ internal sealed class AnyApp : Application
     void OnHotkey()
     {
         long detected = Stopwatch.GetTimestamp();
-        Dispatcher.BeginInvoke(() => RequestToggle("hotkey", detected));
+        Dispatcher.BeginInvoke(() => RequestToggle(detected));
     }
 
     /// <summary>フックスレッドから呼ばれる。OnHotkey と同じく UI スレッドへ渡すだけにする。</summary>
     void OnHookAction(HookAction action) => Dispatcher.BeginInvoke(() =>
     {
-        Log.Write($"hook action={action}");
+        Log.HookActionReceived(action);
         switch (action)
         {
             case HookAction.HoldStart: _controller.HoldStart(); break;
@@ -154,11 +155,11 @@ internal sealed class AnyApp : Application
         }
     });
 
-    /// <summary>録音の開始/停止要求の入口。経路(hotkey/tray)と、検出から UI 処理までの遅れだけを記録する。</summary>
-    void RequestToggle(string source, long detected = 0)
+    /// <summary>録音の開始/停止要求の入口。経路(hotkey/tray)と、検出から UI 処理までの遅れだけを記録する。detected が 0 ならトレイから。</summary>
+    void RequestToggle(long detected = 0)
     {
-        string delay = detected == 0 ? "" : FormattableString.Invariant($" ui_delay_ms={Stopwatch.GetElapsedTime(detected).TotalMilliseconds:F0}");
-        Log.Write($"toggle requested source={source}{delay}");
+        if (detected == 0) Log.ToggleRequestedFromTray();
+        else Log.ToggleRequestedFromHotkey(Stopwatch.GetElapsedTime(detected).TotalMilliseconds);
         _controller.Toggle();
     }
 
@@ -166,7 +167,7 @@ internal sealed class AnyApp : Application
 
     void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        Log.Write($"unhandled {e.Exception.GetType().Name}");
+        Log.Unhandled(e.Exception.GetType().Name);
         e.Handled = true;
         _status.Present(new StatusView(StatusKind.Failed, "予期しないエラー",
             $"{e.Exception.GetType().Name}。状態が不明な場合はトレイから終了して起動し直してください。", CanClose: true,
@@ -204,7 +205,7 @@ internal sealed class AnyApp : Application
                 "Any Dictation", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
             return;
         _exiting = true;
-        Log.Write("exit");
+        Log.Exiting();
         SystemEvents.SessionSwitch -= OnSessionSwitch;
         _showWait?.Unregister(null);
         _showEvent.Dispose();

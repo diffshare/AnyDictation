@@ -35,7 +35,7 @@ public class LiveSessionTests
         if (server != null) p.Endpoint = server.Endpoint.AbsoluteUri;
         p.Language = language;
         if (model != null) p.Model = model;
-        return new LiveTranscriptionSession(p, Key, connector, log == null ? null : log.Enqueue, connect, finish);
+        return new LiveTranscriptionSession(p, Key, connector, log == null ? null : new QueueLogger(log), connect, finish);
     }
 
     static async Task<TranscriptionException> FailureOf(LiveTranscriptionSession s)
@@ -794,8 +794,11 @@ public class LiveSessionTests
         Assert.Equal(Secret, await s.Result.WaitAsync(Wait));
         await server.Done;
 
+        // final は結果を確定させた後に書くため、Result の完了より少し遅れることがある
+        Assert.True(SpinWait.SpinUntil(() => log.Any(l => l.Contains(" stage=final ")), Wait));
         var lines = log.ToArray();
-        string[] expectedOrder = { "connect_started", "connected", "session_updated", "send_started", "first_delta", "audio_complete", "commit_sent", "committed", "final" };
+        // commit_sent は送信の完了後に書くため、受信側の committed と前後することがある。順序は audio_complete の後であることだけを見る
+        string[] expectedOrder = { "connect_started", "connected", "session_updated", "send_started", "first_delta", "audio_complete", "committed", "final" };
         int at = 0;
         foreach (var stage in expectedOrder)
         {
@@ -803,6 +806,8 @@ public class LiveSessionTests
             Assert.True(found >= 0, $"{stage} が順序どおりに記録されていません:\n{string.Join('\n', lines)}");
             at = found + 1;
         }
+        Assert.True(Array.FindIndex(lines, l => l.Contains(" stage=commit_sent ")) > Array.FindIndex(lines, l => l.Contains(" stage=audio_complete ")),
+            $"commit_sent が audio_complete の後に記録されていません:\n{string.Join('\n', lines)}");
         Assert.Contains(lines, l => l.Contains("stage=commit_sent") && l.Contains("audio_bytes=4800"));
         Assert.Contains(lines, l => l.Contains("stage=final") && l.Contains($"chars={Secret.Length}"));
         Assert.All(lines, l =>
@@ -831,6 +836,8 @@ public class LiveSessionTests
         s.Start();
         s.Enqueue(Pcm(4800, 1));
         await FailureOf(s);
+        // failed は結果を失敗にした後に書くため、Result の完了より少し遅れることがある
+        Assert.True(SpinWait.SpinUntil(() => log.Any(l => l.Contains("stage=failed ")), Wait));
         Assert.Contains(log, l => l.Contains("stage=failed ") && l.EndsWith(" kind=Network"));
 
         await using var waiting = new LiveServer(async c =>
