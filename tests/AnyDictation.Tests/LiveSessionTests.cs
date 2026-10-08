@@ -776,14 +776,17 @@ public class LiveSessionTests
         const string Secret = "秘密の発言です";
         var chunk = Pcm(4800, 5);
         string base64 = Convert.ToBase64String(chunk);
+        var log = new ConcurrentQueue<string>();
         await using var server = new LiveServer(async c =>
         {
             await c.HandshakeAsync();
             await c.ReadUntilCommitAsync(async n => await c.SendAsync(LiveConnection.Delta("i", Secret)));
+            // final による送信キャンセルより前に、commit_sent の記録を完了させる。
+            Assert.True(SpinWait.SpinUntil(() => log.Any(l => l.Contains(" stage=commit_sent ")), Wait),
+                "commit_sent が制限時間内に記録されていません。");
             await c.SendAsync(LiveConnection.Committed("i"));
             await c.SendAsync(LiveConnection.Completed("i", Secret));
         });
-        var log = new ConcurrentQueue<string>();
         var s = New(server, log);
         var partial = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         s.PartialChanged += () => partial.TrySetResult();
