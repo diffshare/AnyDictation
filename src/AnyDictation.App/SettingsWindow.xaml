@@ -102,7 +102,8 @@
                             </Grid.ColumnDefinitions>
                             <StackPanel IsItemsHost="True" Margin="8,4,8,0" KeyboardNavigation.TabNavigation="Once"
                                         KeyboardNavigation.DirectionalNavigation="Cycle"/>
-                            <ContentPresenter Grid.Column="1" ContentSource="SelectedContent" Margin="8,14,0,0"/>
+                            <!-- この名前がないと、選択中のタブの中身が UI オートメーション(UIA)に公開されない -->
+                            <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Column="1" ContentSource="SelectedContent" Margin="8,14,0,0"/>
                         </Grid>
                     </ControlTemplate>
                 </Setter.Value>
