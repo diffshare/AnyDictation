@@ -63,7 +63,7 @@ public sealed class KeyboardHookTests : IDisposable
             started.Wait();
             Ui.Invoke(() =>
             {
-                Hook = new KeyboardHook(TestHookMarker, () => Native.SendMaskKey(TestHookMarker));
+                Hook = new KeyboardHook(TestHookMarker, () => KeyboardInput.SendMaskKey(TestHookMarker));
                 Hook.Toggled += () => Toggles.Enqueue((Stopwatch.GetTimestamp(), Environment.CurrentManagedThreadId));
                 Hook.Install(); // 本番と同じく UI スレッドから設定する
             });
@@ -80,7 +80,7 @@ public sealed class KeyboardHookTests : IDisposable
     static void RequireNoPhysicalModifier()
     {
         var wait = Stopwatch.StartNew();
-        while (Native.AnyModifierDown())
+        while (KeyboardInput.AnyModifierDown())
         {
             Assert.True(wait.Elapsed < TimeSpan.FromSeconds(10), "手元で修飾キーが押されています。離してから実行してください。");
             Thread.Sleep(50);
@@ -108,20 +108,20 @@ public sealed class KeyboardHookTests : IDisposable
 
     static void SendMask()
     {
-        Send(Native.VK_MASK, false, TestHookMarker);
-        Send(Native.VK_MASK, true, TestHookMarker);
+        Send(KeyboardInput.VK_MASK, false, TestHookMarker);
+        Send(KeyboardInput.VK_MASK, true, TestHookMarker);
     }
 
     /// <summary>途中の失敗でもデスクトップに Ctrl / Win を押したまま残さない。余分な up は無害。</summary>
     static void ReleaseAll()
     {
         foreach (var vk in new[] { LCtrl, LWin })
-            SendInput(1, [new INPUT { type = 1, ki = new KEYBDINPUT { wVk = vk, dwFlags = 2, dwExtraInfo = Native.OwnMarker } }], Marshal.SizeOf<INPUT>());
+            SendInput(1, [new INPUT { type = 1, ki = new KEYBDINPUT { wVk = vk, dwFlags = 2, dwExtraInfo = KeyboardInput.OwnMarker } }], Marshal.SizeOf<INPUT>());
     }
 
     static void Send(ushort vk, bool up, UIntPtr? marker = null)
     {
-        var input = new INPUT { type = 1, ki = new KEYBDINPUT { wVk = vk, dwFlags = up ? 2u : 0u, dwExtraInfo = marker ?? Native.OwnMarker } };
+        var input = new INPUT { type = 1, ki = new KEYBDINPUT { wVk = vk, dwFlags = up ? 2u : 0u, dwExtraInfo = marker ?? KeyboardInput.OwnMarker } };
         Assert.Equal(1u, SendInput(1, [input], Marshal.SizeOf<INPUT>()));
         Thread.Sleep(30);
     }

@@ -3,6 +3,9 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace AnyDictation.App;
 
@@ -35,6 +38,8 @@ internal partial class StatusWindow : Window
     /// <summary>「表示中で、Esc で閉じられる内容」かどうかが変わるたびに UI スレッドで呼ばれる。表示の変更、自動で隠れる、閉じるのどれでも、ウィンドウの表示状態から導く。</summary>
     public event Action<bool>? EscDismissibleChanged;
 
+    const int WsExNoActivate = 0x08000000, WsExToolWindow = 0x00000080;
+
     public StatusWindow()
     {
         InitializeComponent();
@@ -42,9 +47,10 @@ internal partial class StatusWindow : Window
         _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); Hide(); };
         SourceInitialized += (_, _) =>
         {
-            var hwnd = new WindowInteropHelper(this).Handle;
-            Native.SetWindowLong(hwnd, Native.GWL_EXSTYLE,
-                Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE) | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW);
+            // フォーカスを奪わず、Alt+Tab に出さない
+            var hwnd = new HWND(new WindowInteropHelper(this).Handle);
+            int style = PInvoke.GetWindowLong(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE);
+            PInvoke.SetWindowLong(hwnd, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE, style | WsExNoActivate | WsExToolWindow);
         };
     }
 
