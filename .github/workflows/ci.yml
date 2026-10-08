@@ -23,6 +23,8 @@ jobs:
         run: dotnet test tests/AnyDictation.Tests -c Release --no-build
       - name: Build E2E
         run: dotnet build tests/AnyDictation.E2E -c Release
+      - name: Tray icon tests
+        run: dotnet test tests/AnyDictation.E2E -c Release --no-build --filter "FullyQualifiedName~TrayIconTests"
       - name: Settings GUI E2E
         env:
           ANYDICTATION_RUN_E2E: '1'
