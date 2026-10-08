@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
+using Windows.Win32;
 
 namespace AnyDictation.App;
 
@@ -139,7 +140,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
             return;
         }
         _repasting = true;
-        var target = Native.GetForegroundWindow();
+        IntPtr target = PInvoke.GetForegroundWindow();
         _job = new Job { Wav = Array.Empty<byte>(), Target = target, Tracker = new ForegroundTracker(target) };
         try
         {
@@ -219,7 +220,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     {
         if (_state.Toggle() != ToggleOutcome.Stopped) return; // Recording -> Recognizing
         _tick.Stop();
-        var target = Native.GetForegroundWindow();
+        IntPtr target = PInvoke.GetForegroundWindow();
         var tracker = new ForegroundTracker(target); // 録音終了の時点から前面ウィンドウの移動を記録する
         CaptureResult result;
         try
@@ -286,7 +287,7 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         // キューに積まれている間に取消/停止/新しい録音の開始があった場合、古い通知は無視する
         if (_state.State != SessionState.Recording || !_recorder.IsCurrent(session)) return;
         _tick.Stop();
-        var target = Native.GetForegroundWindow();
+        IntPtr target = PInvoke.GetForegroundWindow();
         var result = _recorder.TakeInterrupted();
         RecordingSounds.Stopped();
         bool wasLive = _live != null;
@@ -579,13 +580,13 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
     async Task<bool> IDeliveryEnvironment.WaitForModifierReleaseAsync()
     {
         var deadline = DateTime.UtcNow + ModifierReleaseTimeout;
-        while (Native.AnyModifierDown())
+        while (KeyboardInput.AnyModifierDown())
         {
             if (_exiting || DateTime.UtcNow > deadline) return false;
             await Task.Delay(25);
         }
         await Task.Delay(40); // Win キー解放の処理が済むのを待つ
-        return !Native.AnyModifierDown();
+        return !KeyboardInput.AnyModifierDown();
     }
 
     PasteContext IDeliveryEnvironment.CaptureContext()
@@ -593,17 +594,17 @@ internal sealed class DictationController : IDisposable, IDeliveryEnvironment
         var job = _job!;
         return new PasteContext(
             job.Target.ToInt64(),
-            Native.GetForegroundWindow().ToInt64(),
+            ((IntPtr)PInvoke.GetForegroundWindow()).ToInt64(),
             job.Tracker.ChangedAwayFromTarget,
-            Native.EvaluateElevation(job.Target),
+            ProcessElevation.Evaluate(job.Target),
             job.Tracker.IsActive);
     }
 
-    bool IDeliveryEnvironment.SendPaste() => Native.SendCtrlV();
+    bool IDeliveryEnvironment.SendPaste() => KeyboardInput.SendCtrlV();
 
-    bool IDeliveryEnvironment.ModifierHeld => Native.AnyModifierDown();
+    bool IDeliveryEnvironment.ModifierHeld => KeyboardInput.AnyModifierDown();
 
-    bool IDeliveryEnvironment.SendEnter() => Native.SendEnter();
+    bool IDeliveryEnvironment.SendEnter() => KeyboardInput.SendEnter();
 
     // ---- 取消・タイマー・終了 ----
 

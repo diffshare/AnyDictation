@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Controls;
 using H.NotifyIcon;
+using Windows.Win32;
 using NotificationIcon = H.NotifyIcon.Core.NotificationIcon;
 
 namespace AnyDictation.App;
@@ -91,7 +92,7 @@ internal sealed class TrayIcon : IDisposable
         }
         finally
         {
-            Native.DestroyIcon(h);
+            PInvoke.DestroyIcon(new Windows.Win32.UI.WindowsAndMessaging.HICON(h));
         }
     }
 

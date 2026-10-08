@@ -48,7 +48,7 @@ internal sealed class KeyboardHook : IDisposable
     /// <summary>Esc で閉じられる通知が表示されている間だけ true にする。録音中でなければ、その間の Esc を捕捉して通知を閉じる。</summary>
     public bool NoticeDismissible { set => _noticeDismissible = value; }
 
-    public KeyboardHook() : this(Native.OwnMarker, () => Native.SendMaskKey(Native.OwnMarker), repasteHotkey: true) { }
+    public KeyboardHook() : this(KeyboardInput.OwnMarker, () => KeyboardInput.SendMaskKey(KeyboardInput.OwnMarker), repasteHotkey: true) { }
 
     /// <summary>
     /// ignoredMarker を持つ入力は自分の送出として無視する。テストが本番のフックと干渉しないよう印を差し替えるために公開している。
@@ -179,7 +179,7 @@ internal sealed class KeyboardHook : IDisposable
                 if (down || up)
                 {
                     int vk = (int)info.vkCode;
-                    _detector.Prune(Native.IsPhysicallyDown, vk); // 処理中のキー自身は GetAsyncKeyState が未更新なので除外される
+                    _detector.Prune(KeyboardInput.IsPhysicallyDown, vk); // 処理中のキー自身は GetAsyncKeyState が未更新なので除外される
                     var r = _detector.Process(vk, down, NowMs());
                     if (r.InjectMask)
                     {
