@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Threading;
@@ -29,7 +31,11 @@ internal sealed class AppUpdater
     public bool IsInstalled => _manager.IsInstalled;
     public event Action? PendingChanged;
 
-    static UpdateManager CreateManager() => new(new GithubSource(RepoUrl, null, false));
+    /// <summary>プレビュー版のビルドか。csproj の PreviewRelease で決まる。プレビュー版は Pre-release も取得し、安定版は安定版だけを取得する。</summary>
+    static readonly bool PreviewRelease = typeof(AppUpdater).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+        .Any(a => a.Key == "PreviewRelease" && a.Value == "true");
+
+    static UpdateManager CreateManager() => new(new GithubSource(RepoUrl, null, PreviewRelease));
 
     public void Start()
     {

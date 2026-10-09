@@ -87,7 +87,9 @@ Native と WPF に依存する判断は、できるだけ Core の純粋なロ�
 - 更新は `AppUpdater` が GitHub Releases を起動時と 24 時間ごとに確認し、裏でダウンロードする。適用は「再起動して更新」のときだけで、録音中、認識中、再送待ちの間は受け付けない。利用者が選ばない限り版を変えないため、通常の終了、サインアウト、次回の起動では適用しない。ダウンロード済みの更新は、次回の起動時に読み直して「再起動して更新」を示す。通信の失敗はログに残し、利用者には通知しない。終了時は、ダウンロードを中止して終わるまで待つ（最後に更新プログラムを書き換えるため）。確認の通信中なら待たない。
 - Velopack の起動時の自動適用は切る。利用者の操作なしに版が変わるうえ、二重起動（設定画面を出すための起動を含む）のたびに動き、起動中のインスタンスを止めてしまうため。
 - portable 版（Velopack でインストールしていない exe）と E2E では、更新の確認をしない。
-- リリースは `vX.Y.Z` のタグの push で `.github/workflows/release.yml` が作る。vpk が必ず作る Portable.zip は自動更新する portable になり、自動更新しない portable 版と紛らわしいため、Releases には載せない。
+- リリースは `vX.Y.Z` のタグの push で `.github/workflows/release.yml` が作る。vpk の版は `AnyDictation.App.csproj` の `VelopackVersion` から読み、アプリの Velopack と揃える。
+- リリース区分は `AnyDictation.App.csproj` の `PreviewRelease` に持ち、タグに接尾辞は付けない。`true`（プレビュー版）は GitHub の Pre-release として公開し、アプリは Pre-release と安定版を取得する。`false`（安定版）は通常の Release として公開し、安定版だけを取得する。より高い番号の安定版はプレビュー版にも通常の更新として届くので、安定版への移行に専用の処理は要らない。アプリはこの値をアセンブリのメタデータから読み、`release.yml` は `dotnet msbuild -getProperty` で読むので、区分はタグが指すコミットで決まる。
+- vpk が必ず作る Portable.zip は自動更新する portable になり、自動更新しない portable 版と紛らわしいため、Releases には載せない。
 - delta パッケージは作らない（`vpk pack --delta None`）。前のリリースの取得が不要で手順が単純になり、Releases には Setup.exe と full nupkg だけが載る。
 
 ## キーボードフック

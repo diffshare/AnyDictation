@@ -13,7 +13,6 @@ jobs:
     permissions:
       contents: write
     env:
-      VPK_VERSION: 1.2.161 # src/AnyDictation.App の Velopack パッケージと同じ版にする
       REPO_URL: https://github.com/${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -25,6 +24,13 @@ jobs:
           $version = $env:GITHUB_REF_NAME.Substring(1)
           if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "タグは vX.Y.Z の形にする: $env:GITHUB_REF_NAME" }
           "VERSION=$version" >> $env:GITHUB_ENV
+      # リリース区分と vpk の版は、タグが指すコミットの App.csproj から読む
+      - name: Release settings
+        run: |
+          $props = (dotnet msbuild src/AnyDictation.App/AnyDictation.App.csproj -getProperty:PreviewRelease -getProperty:VelopackVersion | ConvertFrom-Json).Properties
+          if ($props.PreviewRelease -notin 'true', 'false') { throw "PreviewRelease は true か false にする: $($props.PreviewRelease)" }
+          "PREVIEW_RELEASE=$($props.PreviewRelease)" >> $env:GITHUB_ENV
+          "VPK_VERSION=$($props.VelopackVersion)" >> $env:GITHUB_ENV
       - name: Unit tests
         run: dotnet test tests/AnyDictation.Tests -c Release
       - name: Publish
@@ -41,6 +47,9 @@ jobs:
           $assets | Where-Object Type -eq 'Portable' | ForEach-Object { Remove-Item (Join-Path Releases $_.RelativeFileName) }
           ConvertTo-Json -InputObject @($assets | Where-Object Type -ne 'Portable') -Compress | Set-Content $file -NoNewline
       - name: Upload
-        run: vpk upload github --repoUrl $env:REPO_URL --token $env:GITHUB_TOKEN -o Releases --publish --tag $env:GITHUB_REF_NAME --releaseName "Any Dictation $env:VERSION"
+        # プレビュー版は Pre-release として公開する
+        run: |
+          $pre = @(if ($env:PREVIEW_RELEASE -eq 'true') { '--pre' })
+          vpk upload github --repoUrl $env:REPO_URL --token $env:GITHUB_TOKEN -o Releases --publish @pre --tag $env:GITHUB_REF_NAME --releaseName "Any Dictation $env:VERSION"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

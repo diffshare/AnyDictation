@@ -18,7 +18,7 @@ Windows 向けの音声入力アプリです。Ctrl + Windows キーで録音を
 
 ## インストール
 
-[Releases](https://github.com/diffshare/AnyDictation/releases/latest) から `diffshare.AnyDictation-win-Setup.exe` をダウンロードして実行します。管理者権限は不要で、`%LOCALAPPDATA%\diffshare.AnyDictation` にインストールします。初回の起動では設定画面が開きます。
+[Releases](https://github.com/diffshare/AnyDictation/releases) の最新の版から `diffshare.AnyDictation-win-Setup.exe` をダウンロードして実行します。現在はプレビュー版で、Pre-release として公開しています。管理者権限は不要で、`%LOCALAPPDATA%\diffshare.AnyDictation` にインストールします。初回の起動では設定画面が開きます。
 
 インストーラーとアプリにはコード署名をしていません。そのため、実行時に「Windows によって PC が保護されました」と表示されることがあります。続ける場合は「詳細情報」を押してから「実行」を押します。
 
