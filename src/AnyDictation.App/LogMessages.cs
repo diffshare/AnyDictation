@@ -135,9 +135,6 @@ internal static partial class LogMessages
     public static partial void ForegroundTrackerHookFailed(this ILogger logger);
 
     // 6xxx: 更新
-    [LoggerMessage(EventId = 6001, Level = LogLevel.Information, Message = "update apply on startup version={Version}")]
-    public static partial void UpdateApplyOnStartup(this ILogger logger, string version);
-
     [LoggerMessage(EventId = 6002, Level = LogLevel.Warning, Message = "update apply failed {ExceptionType}")]
     public static partial void UpdateApplyFailed(this ILogger logger, string exceptionType);
 
@@ -147,6 +144,6 @@ internal static partial class LogMessages
     [LoggerMessage(EventId = 6004, Level = LogLevel.Warning, Message = "update check failed {ExceptionType}")]
     public static partial void UpdateCheckFailed(this ILogger logger, string exceptionType);
 
-    [LoggerMessage(EventId = 6005, Level = LogLevel.Information, Message = "update apply on exit version={Version} restart={Restart}")]
-    public static partial void UpdateApplyOnExit(this ILogger logger, string version, bool restart);
+    [LoggerMessage(EventId = 6005, Level = LogLevel.Information, Message = "update apply and restart version={Version}")]
+    public static partial void UpdateApplyAndRestart(this ILogger logger, string version);
 }
