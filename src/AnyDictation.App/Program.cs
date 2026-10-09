@@ -18,11 +18,10 @@ internal static class Program
     static void Main(string[] args)
     {
         // インストール版の install/uninstall などの hook はここで処理して終了する。portable 版では何もしない
-        bool restarted = false;
+        // 更新の適用は「再起動して更新」のときだけにするため、起動時の自動適用は切る
         VelopackApp.Build()
             .SetAutoApplyOnStartup(false)
             .OnBeforeUninstallFastCallback(_ => StartupRegistration.RemoveIfOwned())
-            .OnRestarted(_ => restarted = true)
             .Run();
         if (!E2eMode.Configure(args)) { Environment.ExitCode = 2; return; }
         using var mutex = new Mutex(true, E2eMode.Enabled ? MutexName + ".E2E." + E2eMode.InstanceId : MutexName, out bool first);
@@ -40,7 +39,6 @@ internal static class Program
             }
             return;
         }
-        if (!E2eMode.Enabled && AppUpdater.ApplyPendingOnStartup(restarted)) return;
         new AnyApp().Run();
     }
 }
@@ -178,13 +176,13 @@ internal sealed class AnyApp : Application
 
     void OnUpdateReady()
     {
-        // 終了処理中は、破棄済みのトレイなどを触らない。Pending は設定済みなので終了時に適用される
+        // 終了処理中は、破棄済みのトレイなどを触らない。ダウンロード済みの更新は次回の起動時に AppUpdater.Start が読み直す
         if (_exiting) return;
         string version = _updater!.Pending!.Version.ToString();
         _tray.ShowUpdateReady(version);
-        _settingsWindow.ShowUpdateState(_versionText + $"{version} の準備ができました。終了時に更新します。", canApply: true);
+        _settingsWindow.ShowUpdateState(_versionText + $"{version} の準備ができました。「再起動して更新」を選ぶと更新します。", canApply: true);
         _tray.Balloon("更新の準備ができました",
-            $"{version} に更新できます。トレイのメニューか設定画面の「一般」で「再起動して更新」を選ぶか、終了したときに更新します。");
+            $"{version} に更新できます。トレイのメニューか設定画面の「一般」で「再起動して更新」を選んでください。");
     }
 
     /// <summary>録音、認識、再送待ちの間は更新しない。その音声を失わないため。</summary>
@@ -198,7 +196,7 @@ internal sealed class AnyApp : Application
         RequestExit(restart: true);
     }
 
-    /// <summary>本当の終了。録音と通信を止め、メモリ上の音声を消して、フックとトレイを解放する。ダウンロード済みの更新があれば適用する。</summary>
+    /// <summary>本当の終了。録音と通信を止め、メモリ上の音声を消して、フックとトレイを解放する。restart は「再起動して更新」のときだけ true にし、ダウンロード済みの更新を適用する。</summary>
     async void RequestExit(bool restart)
     {
         if (_exiting) return;
@@ -219,7 +217,7 @@ internal sealed class AnyApp : Application
         _settingsWindow.Close();
         // 利用者からは終了済みに見える。更新のダウンロード中にプロセスが終わらないよう、止めて待つ(確認の例外は CheckAsync が処理済み)
         if (_updater != null) await _updater.StopAsync();
-        _updater?.ApplyOnExit(restart);
+        if (restart) _updater?.ApplyAndRestart();
         Shutdown();
     }
 }
