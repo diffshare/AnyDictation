@@ -10,6 +10,8 @@
     <Product>Any Dictation</Product>
     <Version>1.0.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- exe とウィンドウのアイコン。元データは AppIcon.svg。release.yml もインストーラーのアイコンに使う -->
+    <ApplicationIcon>AppIcon.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

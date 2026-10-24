@@ -80,11 +80,14 @@ internal sealed class TrayIcon : IDisposable
             using var bg = new SolidBrush(fill);
             g.FillEllipse(bg, 1, 1, 30, 30);
             using var white = new SolidBrush(Color.White);
-            using var pen = new Pen(Color.White, 2.5f);
-            g.FillRectangle(white, 12, 6, 8, 12);                 // マイク本体
-            g.DrawArc(pen, 9, 9, 14, 13, 0, 180);                  // 受け
-            g.DrawLine(pen, 16, 22, 16, 26);
-            g.DrawLine(pen, 12, 26, 20, 26);
+            using var pen = new Pen(Color.White, 2.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            using var body = new GraphicsPath();                     // マイク本体(カプセル形)
+            body.AddArc(11.5f, 5, 9, 9, 180, 180);
+            body.AddArc(11.5f, 10, 9, 9, 0, 180);
+            body.CloseFigure();
+            g.FillPath(white, body);
+            g.DrawArc(pen, 8.8f, 6.5f, 14.4f, 14.4f, 0, 180);      // 受け
+            g.DrawLine(pen, 16, 20.9f, 16, 25);
         }
         IntPtr h = bmp.GetHicon();
         try
