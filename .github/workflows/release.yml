@@ -38,7 +38,7 @@ jobs:
       - name: Install vpk
         run: dotnet tool install -g vpk --version $env:VPK_VERSION
       - name: Pack
-        run: vpk pack --delta None --packId diffshare.AnyDictation --packVersion $env:VERSION --packDir publish --mainExe AnyDictation.exe --packTitle "Any Dictation" --packAuthors diffshare -o Releases
+        run: vpk pack --delta None --packId diffshare.AnyDictation --packVersion $env:VERSION --packDir publish --mainExe AnyDictation.exe --packTitle "Any Dictation" --packAuthors diffshare --icon src/AnyDictation.App/AppIcon.ico -o Releases
       # vpk は自動更新する Portable.zip も必ず作る。配布はインストーラーだけにするため、upload の対象一覧から外す
       - name: Exclude portable
         run: |
